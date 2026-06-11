@@ -1,0 +1,74 @@
+{
+  "call_id": "df6c3421",
+  "call_name": "user_simulator_response",
+  "timestamp": "2026-06-11T22:43:45.384183",
+  "request": {
+    "model": "openai/qwen3-8b",
+    "messages": [
+      {
+        "role": "system",
+        "content": [
+          "# User Simulation Guidelines",
+          "You are playing the role of a customer contacting a customer service representative. ",
+          "Your goal is to simulate realistic customer interactions while following specific scenario instructions.",
+          "",
+          "## Core Principles",
+          "- Generate one message at a time, maintaining natural conversation flow.",
+          "- Strictly follow the scenario instructions you have received.",
+          "- Never make up or hallucinate information not provided in the scenario instructions. Information that is not provided in the scenario instructions should be considered unknown or unavailable.",
+          "- Avoid repeating the exact instructions verbatim. Use paraphrasing and natural language to convey the same information",
+          "- Disclose information progressively. Wait for the agent to ask for specific information before providing it.",
+          "",
+          "## Task Completion",
+          "- The goal is to continue the conversation until the task is complete.",
+          "- If the instruction goal is satisified, generate the '###STOP###' token to end the conversation.",
+          "- If you are transferred to another agent, generate the '###TRANSFER###' token to indicate the transfer.",
+          "- If you find yourself in a situation in which the scenario does not provide enough information for you to continue the conversation, generate the '###OUT-OF-SCOPE###' token to end the conversation.",
+          "Remember: The goal is to create realistic, natural conversations while strictly adhering to the provided instructions and maintaining character consistency.",
+          "",
+          "",
+          "<scenario>",
+          "Instructions:",
+          "\tDomain: retail",
+          "\tReason for call:",
+          "\t\tYou received your order #W2378156 and wish to exchange the mechanical keyboard for the same one but with clicky switches and the smart thermostat for one compatible with Google Home instead of Apple HomeKit. If there is no keyboard that is clicky, RGB backlight, full size, you'd go for no backlight.",
+          "\tKnown info:",
+          "\t\tYou are Yusuf Rossi in zip code 19122.",
+          "\tUnknown info:",
+          "\t\tYou do not remember your email address.",
+          "\tTask instructions:",
+          "\t\tYou are detail-oriented and want to make sure everything is addressed in one go.",
+          "</scenario>"
+        ]
+      },
+      {
+        "role": "user",
+        "content": "Hi! How can I help you today?"
+      }
+    ],
+    "tools": null,
+    "tool_choice": null,
+    "kwargs": {
+      "api_base": "http://127.0.0.1:8000/v1",
+      "api_key": "EMPTY",
+      "temperature": 0.7,
+      "top_p": 0.8,
+      "max_tokens": 512,
+      "extra_body": "{'chat_template_kwargs': {'enable_thinking': False}}",
+      "seed": 626729,
+      "num_retries": 3
+    },
+    "timestamp": "2026-06-11T22:43:43.783255"
+  },
+  "response": {
+    "timestamp": "2026-06-11T22:43:45.383783",
+    "content": "Hi there! I hope you're doing well. I have a request regarding my recent order. My order number is W2378156, and I received the mechanical keyboard and the smart thermostat. I would like to exchange the mechanical keyboard for one with clicky switches. If there isn't a keyboard that has clicky switches, RGB backlight, and is full size, I'm okay with one that doesn't have the RGB backlight. Additionally, I'd like to exchange the smart thermostat for one that's compatible with Google Home instead of Apple HomeKit. Could you help me with that?",
+    "tool_calls": null,
+    "cost": 0.0,
+    "usage": {
+      "completion_tokens": 123,
+      "prompt_tokens": 432
+    },
+    "generation_time_seconds": 1.5998897179961205
+  }
+}

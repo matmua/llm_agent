@@ -1,0 +1,80 @@
+{
+  "run_name": "20260611_tau3_retail_qwen3_8b_subset5_plan_first",
+  "run_dir": "/root/autodl-tmp/llm_agent/trajectories/20260611_tau3_retail_qwen3_8b_subset5_plan_first",
+  "benchmark": "tau3-bench",
+  "benchmark_repo": "/root/autodl-tmp/llm_agent/external/tau2-bench",
+  "domain": "retail",
+  "task_split": "base",
+  "task_ids": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4"
+  ],
+  "model": "openai/qwen3-8b",
+  "agent_mode": "plan_first",
+  "agent_implementation": "plan_first_llm_agent",
+  "api_base": "http://127.0.0.1:8000/v1",
+  "proxy_disabled": true,
+  "agent_llm_args": {
+    "api_base": "http://127.0.0.1:8000/v1",
+    "api_key": "EMPTY",
+    "temperature": 0.3,
+    "top_p": 0.8,
+    "max_tokens": 768,
+    "extra_body": {
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      }
+    },
+    "plan_llm_args": {
+      "api_base": "http://127.0.0.1:8000/v1",
+      "api_key": "EMPTY",
+      "temperature": 0.1,
+      "top_p": 1.0,
+      "max_tokens": 512,
+      "extra_body": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      }
+    }
+  },
+  "user_llm_args": {
+    "api_base": "http://127.0.0.1:8000/v1",
+    "api_key": "EMPTY",
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "max_tokens": 512,
+    "extra_body": {
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      }
+    }
+  },
+  "nl_eval_llm_args": {
+    "api_base": "http://127.0.0.1:8000/v1",
+    "api_key": "EMPTY",
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "max_tokens": 512,
+    "extra_body": {
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      }
+    }
+  },
+  "plan_llm_args": {
+    "api_base": "http://127.0.0.1:8000/v1",
+    "api_key": "EMPTY",
+    "temperature": 0.1,
+    "top_p": 1.0,
+    "max_tokens": 512,
+    "extra_body": {
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      }
+    }
+  }
+}

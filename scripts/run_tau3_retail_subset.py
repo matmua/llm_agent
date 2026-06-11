@@ -162,10 +162,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=300)
     parser.add_argument("--agent-temperature", type=float, default=0.3)
     parser.add_argument("--user-temperature", type=float, default=0.7)
+    parser.add_argument(
+        "--agent-mode",
+        choices=["direct", "plan_first"],
+        default="direct",
+        help="direct uses tau3's default LLMAgent; plan_first plans privately before acting.",
+    )
     parser.add_argument("--top-p", type=float, default=0.8)
     parser.add_argument("--agent-max-tokens", type=int, default=768)
     parser.add_argument("--user-max-tokens", type=int, default=512)
     parser.add_argument("--eval-max-tokens", type=int, default=512)
+    parser.add_argument("--plan-max-tokens", type=int, default=192)
+    parser.add_argument("--plan-temperature", type=float, default=0.1)
     parser.add_argument("--enable-thinking", action="store_true")
     parser.add_argument("--eval-response-format", action="store_true")
     parser.add_argument("--llm-log-mode", choices=["all", "latest"], default="all")
@@ -193,6 +201,13 @@ def main() -> None:
     from tau2.runner.helpers import get_tasks
     from tau2.utils.llm_utils import set_llm_log_mode
 
+    agent_implementation = "llm_agent"
+    if args.agent_mode == "plan_first":
+        from plan_first_agent import register_plan_first_agent
+
+        register_plan_first_agent()
+        agent_implementation = "plan_first_llm_agent"
+
     agent_llm_args = build_llm_args(
         api_base=args.api_base,
         api_key=args.api_key,
@@ -218,6 +233,17 @@ def main() -> None:
         enable_thinking=False,
         response_format=args.eval_response_format,
     )
+    plan_llm_args = build_llm_args(
+        api_base=args.api_base,
+        api_key=args.api_key,
+        temperature=args.plan_temperature,
+        top_p=1.0,
+        max_tokens=args.plan_max_tokens,
+        enable_thinking=False,
+        response_format=False,
+    )
+    if args.agent_mode == "plan_first":
+        agent_llm_args["plan_llm_args"] = plan_llm_args
     patch_local_nl_evaluator(args.model, eval_llm_args)
     set_llm_log_mode(args.llm_log_mode)
 
@@ -238,7 +264,7 @@ def main() -> None:
         task_set_name="retail",
         task_split_name="base",
         task_ids=[str(task_id) for task_id in args.task_ids],
-        agent="llm_agent",
+        agent=agent_implementation,
         llm_agent=args.model,
         llm_args_agent=agent_llm_args,
         user="user_simulator",
@@ -269,11 +295,14 @@ def main() -> None:
         "task_split": "base",
         "task_ids": [task.id for task in tasks],
         "model": args.model,
+        "agent_mode": args.agent_mode,
+        "agent_implementation": agent_implementation,
         "api_base": args.api_base,
         "proxy_disabled": True,
         "agent_llm_args": agent_llm_args,
         "user_llm_args": user_llm_args,
         "nl_eval_llm_args": eval_llm_args,
+        "plan_llm_args": plan_llm_args if args.agent_mode == "plan_first" else None,
     }
     (run_dir / "run_meta.json").write_text(
         json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8"
