@@ -1,0 +1,15 @@
+models/
+external/
+data/
+.venv-tau2/
+.uv-cache/
+.hf-cache/
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+.env
+.env.*
+.DS_Store
+
