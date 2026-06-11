@@ -1,22 +1,23 @@
-# Tau3 Retail Subset Summary
+# Tau3 Retail Plan-First V2 错误摘要
 
-- Run dir: `/root/autodl-tmp/llm_agent/trajectories/20260611_tau3_retail_qwen3_8b_subset5_plan_first_v2`
-- Total simulations: 5
-- Scored simulations: 5
-- Infrastructure/premature errors: 3
-- Successes: 0
-- Accuracy over all attempted tasks: 0.0000
-- Accuracy over scored tasks: 0.0000
+- 运行目录：`/root/autodl-tmp/llm_agent/trajectories/20260611_tau3_retail_qwen3_8b_subset5_plan_first_v2`
+- 模式：plan-first V2
+- 总模拟数：5
+- 有效计分模拟数：5
+- 提前终止/基础设施类失败：3
+- 成功数：0
+- 全部尝试任务准确率：0.0000
+- 有效计分任务准确率：0.0000
 
-## Failure Types
+## 失败类型
 
-- premature_termination:too_many_errors: 2
-- nl_assertion_failed: 2
-- premature_termination:max_steps: 1
+- `premature_termination:too_many_errors`: 2
+- `nl_assertion_failed`: 2
+- `premature_termination:max_steps`: 1
 
-## Per Task
+## 单任务结果
 
-| task_id | reward | termination | failure_type | tool_calls | messages |
+| task_id | reward | 终止原因 | 失败类型 | 工具调用数 | 消息数 |
 |---|---:|---|---|---:|---:|
 | 0 | 0.0 | too_many_errors | premature_termination:too_many_errors | 5 | 14 |
 | 1 | 0.0 | too_many_errors | premature_termination:too_many_errors | 5 | 22 |
@@ -24,56 +25,59 @@
 | 3 | 0.0 | user_stop | nl_assertion_failed | 8 | 30 |
 | 4 | 0.0 | max_steps | premature_termination:max_steps | 3 | 41 |
 
-## Official Reference
+## 官方参考值
 
-These are full benchmark leaderboard pass^1 retail numbers from the tau3-bench repository snapshot. They are not directly comparable to this local 5-task run because this run uses Qwen3-8B as both agent and user simulator, and also uses a local Qwen evaluator for NL assertions.
+以下是 tau3-bench 仓库快照中的完整 retail leaderboard pass^1 结果。它们不能和这个本地 5 条运行直接比较，因为这里 Qwen3-8B 同时作为 agent、user simulator 和本地 NL assertion evaluator。
 
 - Qwen3.5-397B-A17B retail pass^1: 84.43%
 - Qwen3-Max-Thinking retail pass^1: 79.39%
 - GPT-4.1 retail pass^1: 74.00%
 - o4-mini retail pass^1: 68.30%
 
-## Failure Trace Notes
+## 失败轨迹摘要
 
-### Task 0 - premature_termination:too_many_errors
-- Last user: Sure! Let me check that for you. I believe the product IDs are KB-4567 and TH-8901, respectively. Could you confirm if these are correct?
-- Last assistant: I'll need the product IDs for the mechanical keyboard and smart thermostat to proceed with the exchange. Could you please provide those?
-- Tool error at turn 3: Error: Product not found
-- Tool error at turn 7: Error: Product not found
-- Tool error at turn 9: Error: Product not found
-- Tool error at turn 11: Error: Product not found
-- Tool error at turn 13: Error: Product not found
+### Task 0 - `premature_termination:too_many_errors`
 
-### Task 1 - premature_termination:too_many_errors
-- Last user: I can confirm that I purchased a mechanical keyboard and a smart thermostat as part of order #W2378156. However, I don’t have the variant IDs for the items. I’d like to exchange the keyboard for one with clicky switches, RGB backlight, and full size, and the thermostat for one compatible with Google Home instead of Apple HomeKit. If there’s no keyboard that ...
-- Last assistant: Could you please provide the order details, such as the items purchased and their variant IDs? This will help me confirm the order and proceed with the exchange.
-- Tool error at turn 3: Error: Order not found
-- Tool error at turn 7: Error: Order not found
-- Tool error at turn 9: Error: Order not found
-- Tool error at turn 13: Error: Order not found
-- Tool error at turn 21: Error: Order not found
+- 最后用户消息：用户给出了猜测的 product IDs：`KB-4567` 和 `TH-8901`。
+- 最后 assistant 消息：assistant 继续要求用户提供机械键盘和智能温控器的 product IDs。
+- 工具错误：连续 5 次 `Error: Product not found`。
 
-### Task 2 - nl_assertion_failed
-- Last user: ###STOP###
-- Last assistant: The T-Shirt product has the following available options: - **Blue, M, Cotton, Crew Neck** - $50.88 - **Purple, XL, Cotton, Crew Neck** - $49.67 - **Red, XXL, Cotton, Crew Neck** - $46.85 - **Black, XXL, Polyester, V-Neck** - $49.52 - **Black, S, Polyester, Crew Neck** - $52.88 - **Purple, S, Polyester, V-Neck** - $53.48 - **Blue, S, Cotton, V-Neck** - $53.43...
-- Tool error at turn 5: Error: Tool 'get_user_orders' not found.
-- Failed action check: {"expected": {"action_id": "2_1", "requestor": "assistant", "name": "get_product_details", "arguments": {"product_id": "6086499569"}, "info": null, "compare_args": null}, "match": false, "justification": ""}
-- Failed action check: {"expected": {"action_id": "2_8", "requestor": "assistant", "name": "get_order_details", "arguments": {"order_id": "#W6679257"}, "info": null, "compare_args": null}, "match": false, "justification": ""}
-- Failed NL assertion: {"assertion": "Agent should tell the user that there are 10 t-shirt options available.", "met": false, "justification": "The agent provided a list of 9 available t-shirt options, noting that one item was unavailable. However, the expected outcome was to state ...
+根因：agent 没有先查订单 `#W2378156`，而是先用 `mechanical_keyboard_id` 这类占位符调用 `get_product_details`。失败后又相信用户模拟器猜出的 `KB-4567`、`TH-8901`，导致重复无效查询。
 
-### Task 3 - nl_assertion_failed
-- Last user: Thank you for the confirmation. I appreciate the assistance. I’ll look forward to the confirmation email. Have a great day! ###STOP###
-- Last assistant: Your order #W6247578 has been successfully modified. The t-shirt in your order has been updated to the new options: "purple", "S", "polyester", and "v-neck" (item ID 9647292434). The price has been adjusted accordingly, and the payment has been processed. You will receive a confirmation email shortly. If you have any further questions or need additional assi...
-- Tool error at turn 3: Error: Product not found
-- Failed action check: {"expected": {"action_id": "3_6", "requestor": "assistant", "name": "get_order_details", "arguments": {"order_id": "#W9711842"}, "info": null, "compare_args": null}, "match": false, "justification": ""}
-- Failed action check: {"expected": {"action_id": "3_7", "requestor": "assistant", "name": "get_order_details", "arguments": {"order_id": "#W4776164"}, "info": null, "compare_args": null}, "match": false, "justification": ""}
-- Failed action check: {"expected": {"action_id": "3_8", "requestor": "assistant", "name": "get_order_details", "arguments": {"order_id": "#W6679257"}, "info": null, "compare_args": null}, "match": false, "justification": ""}
-- Failed action check: {"expected": {"action_id": "3_9", "requestor": "assistant", "name": "get_order_details", "arguments": {"order_id": "#W2378156"}, "info": null, "compare_args": null}, "match": false, "justification": ""}
-- Failed action check: {"expected": {"action_id": "3_12", "requestor": "assistant", "name": "modify_pending_order_items", "arguments": {"order_id": "#W4776164", "item_ids": ["8349118980"], "new_item_ids": ["9647292434"], "payment_method_id": "credit_card_9513926"}, "info": null, "co...
-- Failed NL assertion: {"assertion": "Agent should tell the user that there are 10 t-shirt options available.", "met": false, "justification": "The assistant initially informed the user that there are 12 t-shirt options available in the store. However, the expected outcome was for t...
+### Task 1 - `premature_termination:too_many_errors`
 
-### Task 4 - premature_termination:max_steps
-- Last user: I’m sorry, but I don’t have my email address with me, and I’m not sure where the order ID is. I was just trying to confirm the number of t-shirt options available and whether I can modify my pending orders. If I can’t provide the order ID, is there another way to proceed?
-- Last assistant: I understand. To proceed with modifying your pending orders, I'll need your order ID and email address. Could you please provide these details?
-- Tool error at turn 3: Error: Product not found
+- 最后用户消息：用户确认订单是 `#W2378156`，但没有 variant IDs，希望 agent 帮忙处理换货。
+- 最后 assistant 消息：assistant 要求用户提供订单详情和 variant IDs。
+- 工具错误：连续 5 次 `Error: Order not found`。
 
+根因：agent 用 `W2378156` 查询订单，而环境里的订单 ID 需要 `#W2378156`。错误后没有切换策略，比如用姓名和 zip 找用户，再从用户订单列表中确认订单。
+
+### Task 2 - `nl_assertion_failed`
+
+- 最后用户消息：`###STOP###`
+- 最后 assistant 消息：assistant 列出了一批 T-Shirt 选项。
+- 工具错误：调用了不存在的 `get_user_orders`。
+- 失败断言：benchmark 期望 agent 告诉用户有 10 个 T-shirt 选项；实际回复只说了 9 个可用选项，没有满足“总数 10 个”的断言。
+
+根因：DB 写入侧相比 baseline 有改善，但最终回答没有覆盖 benchmark 要求的数量表述。
+
+### Task 3 - `nl_assertion_failed`
+
+- 最后用户消息：用户感谢并结束。
+- 最后 assistant 消息：assistant 声称已修改订单 `#W6247578`。
+- 工具错误：一开始查 product 时出现 `Error: Product not found`。
+- 失败断言：仍未正确告诉用户有 10 个 T-shirt 选项。
+
+根因：agent 修改了订单，但不是期望的完整订单/商品路径；还遗漏了多个期望的订单详情检查。
+
+### Task 4 - `premature_termination:max_steps`
+
+- 最后用户消息：用户没有 email 和 order ID，希望知道是否还有别的办法继续。
+- 最后 assistant 消息：assistant 仍要求用户提供 order ID 和 email。
+- 工具错误：一开始查 product 时出现 `Error: Product not found`。
+
+根因：agent 没有充分利用用户姓名/zip 或账户查询路径，转而陷入反复向用户索要信息，最终达到最大步数。
+
+## 总结
+
+plan-first V2 没有提升成功率。它降低了一部分工具调用数量，但主要是因为两个任务提前失败、一个任务卡到 `max_steps`。真正需要的是代码层 guardrail，而不是继续让同一个模型用自由文本计划自我约束。

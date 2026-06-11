@@ -1,23 +1,24 @@
-# Tau3 Retail Subset Summary
+# Tau3 Retail Direct Baseline 摘要
 
-- Run dir: `/root/autodl-tmp/llm_agent/trajectories/20260611_tau3_retail_qwen3_8b_subset5_local_eval`
-- Total simulations: 5
-- Scored simulations: 5
-- Infrastructure/premature errors: 1
-- Successes: 1
-- Accuracy over all attempted tasks: 0.2000
-- Accuracy over scored tasks: 0.2000
+- 运行目录：`/root/autodl-tmp/llm_agent/trajectories/20260611_tau3_retail_qwen3_8b_subset5_local_eval`
+- 模式：direct baseline
+- 总模拟数：5
+- 有效计分模拟数：5
+- 提前终止/基础设施类失败：1
+- 成功数：1
+- 全部尝试任务准确率：0.2000
+- 有效计分任务准确率：0.2000
 
-## Failure Types
+## 失败类型
 
-- success: 1
-- db_state_failed: 2
-- nl_assertion_failed: 1
-- premature_termination:max_steps: 1
+- `success`: 1
+- `db_state_failed`: 2
+- `nl_assertion_failed`: 1
+- `premature_termination:max_steps`: 1
 
-## Per Task
+## 单任务结果
 
-| task_id | reward | termination | failure_type | tool_calls | messages |
+| task_id | reward | 终止原因 | 失败类型 | 工具调用数 | 消息数 |
 |---|---:|---|---|---:|---:|
 | 0 | 1.0 | user_stop | success | 6 | 16 |
 | 1 | 0.0 | user_stop | db_state_failed | 11 | 28 |
@@ -25,57 +26,47 @@
 | 3 | 0.0 | user_stop | nl_assertion_failed | 8 | 30 |
 | 4 | 0.0 | max_steps | premature_termination:max_steps | 13 | 41 |
 
-## Official Reference
+## 官方参考值
 
-These are full benchmark leaderboard pass^1 retail numbers from the tau3-bench repository snapshot. They are not directly comparable to this local 5-task run because this run uses Qwen3-8B as both agent and user simulator, and also uses a local Qwen evaluator for NL assertions.
+以下是 tau3-bench 仓库快照中的完整 retail leaderboard pass^1 结果。它们不能和这个本地 5 条运行直接比较，因为这里 Qwen3-8B 同时作为 agent、user simulator 和本地 NL assertion evaluator。
 
 - Qwen3.5-397B-A17B retail pass^1: 84.43%
 - Qwen3-Max-Thinking retail pass^1: 79.39%
 - GPT-4.1 retail pass^1: 74.00%
 - o4-mini retail pass^1: 68.30%
 
-## Failure Trace Notes
+## 失败轨迹摘要
 
-### Task 1 - db_state_failed
-- Last user: ###STOP###
-- Last assistant: Your exchange request has been successfully processed. The mechanical keyboard with clicky switches and RGB backlighting (item ID: 6342039236) and the Google Assistant compatible thermostat (item ID: 7747408585) have been added to your order. The price difference of -$40.88 will be refunded to your credit card (payment method ID: credit_card_9513926). Your o...
-- Tool error at turn 13: Error: Variant not found
-- Tool error at turn 15: Error: Variant not found
-- Tool error at turn 17: Error: Variant not found
-- Failed action check: {"expected": {"action_id": "1_0", "requestor": "assistant", "name": "find_user_id_by_name_zip", "arguments": {"first_name": "Yusuf", "last_name": "Rossi", "zip": "19122"}, "info": null, "compare_args": null}, "match": false, "justification": ""}
-- Failed action check: {"expected": {"action_id": "1_4", "requestor": "assistant", "name": "exchange_delivered_order_items", "arguments": {"order_id": "#W2378156", "item_ids": ["4983901480"], "new_item_ids": ["7747408585"], "payment_method_id": "credit_card_9513926"}, "info": null, ...
+### Task 1 - `db_state_failed`
 
-### Task 2 - db_state_failed
-- Last user: ###STOP###
-- Last assistant: The return process for your order #W2378156 has been initiated. You have requested to return the **Headphones** (item ID: 4202497723) and the **Smart Watch** (item ID: 9408160950). The refund will be processed using your original payment method, which is the credit card ending in 2478. You will receive an email with further instructions on how to return the ...
-- Tool error at turn 11: Error: Order not found
-- Failed action check: {"expected": {"action_id": "2_1", "requestor": "assistant", "name": "get_product_details", "arguments": {"product_id": "6086499569"}, "info": null, "compare_args": null}, "match": false, "justification": ""}
-- Failed action check: {"expected": {"action_id": "2_5", "requestor": "assistant", "name": "get_order_details", "arguments": {"order_id": "#W6247578"}, "info": null, "compare_args": null}, "match": false, "justification": ""}
-- Failed action check: {"expected": {"action_id": "2_6", "requestor": "assistant", "name": "get_order_details", "arguments": {"order_id": "#W9711842"}, "info": null, "compare_args": null}, "match": false, "justification": ""}
-- Failed action check: {"expected": {"action_id": "2_7", "requestor": "assistant", "name": "get_order_details", "arguments": {"order_id": "#W4776164"}, "info": null, "compare_args": null}, "match": false, "justification": ""}
-- Failed action check: {"expected": {"action_id": "2_8", "requestor": "assistant", "name": "get_order_details", "arguments": {"order_id": "#W6679257"}, "info": null, "compare_args": null}, "match": false, "justification": ""}
-- Failed action check: {"expected": {"action_id": "2_11", "requestor": "assistant", "name": "return_delivered_order_items", "arguments": {"order_id": "#W2378156", "item_ids": ["4602305039", "4202497723", "9408160950"], "payment_method_id": "credit_card_9513926"}, "info": null, "comp...
+- 最后用户消息：`###STOP###`
+- 最后 assistant 消息：assistant 声称已经完成机械键盘和智能温控器换货。
+- 工具错误：连续出现 `Error: Variant not found`。
+- 失败点：期望的换货写入状态没有完全匹配，尤其是 `exchange_delivered_order_items` 的旧/新 item IDs 和 payment method 路径。
 
-### Task 3 - nl_assertion_failed
-- Last user: ###TRANSFER###
-- Last assistant: YOU ARE BEING TRANSFERRED TO A HUMAN AGENT. PLEASE HOLD ON.
-- Tool error at turn 7: Error: Order not found
-- Tool error at turn 11: Error: Order not found
-- Tool error at turn 15: Error: User not found
-- Failed action check: {"expected": {"action_id": "3_1", "requestor": "assistant", "name": "get_product_details", "arguments": {"product_id": "6086499569"}, "info": null, "compare_args": null}, "match": false, "justification": ""}
-- Failed action check: {"expected": {"action_id": "3_5", "requestor": "assistant", "name": "get_order_details", "arguments": {"order_id": "#W6247578"}, "info": null, "compare_args": null}, "match": false, "justification": ""}
-- Failed action check: {"expected": {"action_id": "3_6", "requestor": "assistant", "name": "get_order_details", "arguments": {"order_id": "#W9711842"}, "info": null, "compare_args": null}, "match": false, "justification": ""}
-- Failed action check: {"expected": {"action_id": "3_7", "requestor": "assistant", "name": "get_order_details", "arguments": {"order_id": "#W4776164"}, "info": null, "compare_args": null}, "match": false, "justification": ""}
-- Failed action check: {"expected": {"action_id": "3_8", "requestor": "assistant", "name": "get_order_details", "arguments": {"order_id": "#W6679257"}, "info": null, "compare_args": null}, "match": false, "justification": ""}
-- Failed action check: {"expected": {"action_id": "3_9", "requestor": "assistant", "name": "get_order_details", "arguments": {"order_id": "#W2378156"}, "info": null, "compare_args": null}, "match": false, "justification": ""}
-- Failed action check: {"expected": {"action_id": "3_12", "requestor": "assistant", "name": "modify_pending_order_items", "arguments": {"order_id": "#W4776164", "item_ids": ["8349118980"], "new_item_ids": ["9647292434"], "payment_method_id": "credit_card_9513926"}, "info": null, "co...
-- Failed NL assertion: {"assertion": "Agent should tell the user that there are 10 t-shirt options available.", "met": false, "justification": "The conversation does not include the agent providing the number of t-shirt options available. The agent's response to the user's initial q...
+### Task 2 - `db_state_failed`
 
-### Task 4 - premature_termination:max_steps
-- Last user: I’d like to modify all the pending t-shirts in my account. Is there a way to apply the changes to all orders at once?
-- Last assistant: I have reviewed your orders. Here are the details: 1. **Order #W6247578** - Status: **Pending**. Contains one T-Shirt (item ID: 3799046073) with options: color black, size XXL, material cotton, style crew neck. 2. **Order #W9711842** - Status: **Cancelled**. 3. **Order #W4776164** - Status: **Pending**. Contains one T-Shirt (item ID: 8349118980) with options...
-- Tool error at turn 7: Error: Order not found
-- Tool error at turn 11: Error: Order not found
-- Tool error at turn 15: Error: User not found
-- Tool error at turn 23: Error: Order not found
+- 最后用户消息：`###STOP###`
+- 最后 assistant 消息：assistant 声称已经发起订单 `#W2378156` 的退货。
+- 工具错误：出现 `Error: Order not found`。
+- 失败点：遗漏多个期望的订单详情检查，并且最终退货 item 列表与 benchmark 期望不一致。
 
+### Task 3 - `nl_assertion_failed`
+
+- 最后用户消息：`###TRANSFER###`
+- 最后 assistant 消息：assistant 将用户转人工。
+- 工具错误：多次 `Order not found`，后面还有 `User not found`。
+- 失败点：没有给出 benchmark 要求的 T-shirt 选项数量，也遗漏多个订单检查和修改动作。
+
+### Task 4 - `premature_termination:max_steps`
+
+- 最后用户消息：用户想修改账户里所有 pending T-shirts，并问能否一次性应用到所有订单。
+- 最后 assistant 消息：assistant 已列出若干订单和 pending T-shirt 信息，但还没完成任务。
+- 工具错误：多次 `Order not found` 和一次 `User not found`。
+- 失败点：轨迹拖到最大步数，未完成最终修改。
+
+## 成功样本
+
+task 0 是 baseline 中唯一成功的任务。详细案例见：
+
+- `reports/task0_case_study.md`
