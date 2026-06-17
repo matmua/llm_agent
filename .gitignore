@@ -5,11 +5,15 @@ data/
 .uv-cache/
 .hf-cache/
 
+.env
+*.env
+.env.*
+!.env.example
+runs/
+outputs/
+logs/
 __pycache__/
 *.py[cod]
 *$py.class
 
-.env
-.env.*
 .DS_Store
-
