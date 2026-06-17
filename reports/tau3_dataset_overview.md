@@ -1,6 +1,14 @@
 # Tau3 Retail 数据集/环境说明
 
-这个 benchmark 不是传统静态 QA 数据集。更准确地说，它是一个交互式客服环境：
+这个 benchmark 不是传统静态 QA 数据集。更准确地说，它是一个交互式客服环境，并且默认会涉及不止一个 LLM 角色：
+
+1. **agent model**：被测试的客服 agent。
+2. **user simulator model**：根据隐藏任务设定扮演用户，持续生成用户消息。
+3. **NL assertion evaluator model**：对自然语言要求做裁判，例如“agent 是否告诉用户有 10 个 T-shirt 选项”。
+
+我们这次为了不依赖外部 API，把这三个角色都接到了本地 vLLM 的 Qwen3-8B，而不是调用 OpenAI/Anthropic 等外部大模型 API。
+
+整体结构如下：
 
 1. `tasks.json` 定义用户目标和评分标准。
 2. `db.json` 是一个假的零售后台数据库。
@@ -98,6 +106,34 @@ reports/task0_case_study.md
 6. evaluator 检查轨迹和最终数据库状态，给 reward。
 
 所以 agent 不是在预测一个固定答案，而是在一个小型零售后台里执行操作。
+
+## 这次实验用的是哪个模型
+
+这次本地 run 的三个 LLM 角色全部是：
+
+```text
+openai/qwen3-8b
+api_base=http://127.0.0.1:8000/v1
+api_key=EMPTY
+```
+
+也就是说：
+
+| 角色 | 我们这次使用 |
+|---|---|
+| agent | 本地 Qwen3-8B |
+| user simulator | 本地 Qwen3-8B |
+| NL assertion evaluator | 本地 Qwen3-8B |
+| plan-first 私有计划 | 本地 Qwen3-8B |
+
+这让实验可以完全在服务器本地跑通，但也带来一个重要限制：结果不能直接对齐官方 leaderboard。官方配置通常会使用更强的外部 API 模型作为 user simulator 和/或 evaluator，本地 Qwen3-8B 用户模拟器会改变用户行为、对话难度和评估稳定性。
+
+具体配置可以看：
+
+```text
+trajectories/20260611_tau3_retail_qwen3_8b_subset5_local_eval/run_meta.json
+trajectories/20260611_tau3_retail_qwen3_8b_subset5_plan_first_v2/run_meta.json
+```
 
 ## 我们的运行轨迹在哪里
 
