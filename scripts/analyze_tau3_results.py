@@ -25,14 +25,41 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _present(data: dict[str, Any], key: str, default: Any = None) -> Any:
+    return data[key] if key in data else default
+
+
+def _summary_or_meta(
+    run_summary: dict[str, Any],
+    run_meta: dict[str, Any],
+    key: str,
+    default: Any = None,
+) -> Any:
+    if key in run_summary:
+        return run_summary[key]
+    if key in run_meta:
+        return run_meta[key]
+    return default
+
+
+def _task_summary_sort_key(path: Path) -> tuple[int, int | str]:
+    task_id = path.name.removeprefix("task_").removesuffix("_summary.json")
+    return (0, int(task_id)) if task_id.isdigit() else (1, task_id)
+
+
+def _task_jsonl_sort_key(path: Path) -> tuple[int, int | str]:
+    task_id = path.stem.removeprefix("task_")
+    return (0, int(task_id)) if task_id.isdigit() else (1, task_id)
+
+
 def load_task_summaries(run_dir: Path) -> list[dict[str, Any]]:
     summaries = []
-    for path in sorted(run_dir.glob("task_*_summary.json")):
+    for path in sorted(run_dir.glob("task_*_summary.json"), key=_task_summary_sort_key):
         summaries.append(load_json(path))
     if summaries:
         return summaries
 
-    for path in sorted(run_dir.glob("task_*.jsonl")):
+    for path in sorted(run_dir.glob("task_*.jsonl"), key=_task_jsonl_sort_key):
         task_id = path.stem.removeprefix("task_")
         rows = load_jsonl(path)
         high_steps = [
@@ -66,9 +93,20 @@ def load_task_summaries(run_dir: Path) -> list[dict[str, Any]]:
                 "changed_by_controller_count": sum(
                     1 for row in rows if row.get("changed_by_controller")
                 ),
+                "soft_risk_level": _first_row_value(rows, "soft_risk_level", "critical"),
+                "soft_confidence_threshold": _first_row_value(
+                    rows, "soft_confidence_threshold", 0.7
+                ),
             }
         )
     return summaries
+
+
+def _first_row_value(rows: list[dict[str, Any]], key: str, default: Any) -> Any:
+    for row in rows:
+        if key in row:
+            return row[key]
+    return default
 
 
 def build_analysis(run_dir: Path) -> dict[str, Any]:
@@ -108,20 +146,36 @@ def build_analysis(run_dir: Path) -> dict[str, Any]:
         "run_name": run_summary.get("run_name") or run_dir.name,
         "run_dir": str(run_dir),
         "setting": {
-            "domain": run_summary.get("domain") or run_meta.get("domain"),
-            "task_ids": run_summary.get("task_ids") or run_meta.get("task_ids") or [],
-            "mode": run_summary.get("mode") or run_meta.get("mode"),
-            "agent_model": run_summary.get("agent_model") or run_meta.get("agent_model"),
-            "user_model": run_summary.get("user_model") or run_meta.get("user_model"),
-            "evaluator_model": run_summary.get("evaluator_model") or run_meta.get("evaluator_model"),
-            "predictor_model": run_summary.get("predictor_model") or run_meta.get("predictor_model"),
+            "domain": _summary_or_meta(run_summary, run_meta, "domain"),
+            "task_ids": _summary_or_meta(run_summary, run_meta, "task_ids", []),
+            "mode": _summary_or_meta(run_summary, run_meta, "mode"),
+            "soft_risk_level": _summary_or_meta(
+                run_summary, run_meta, "soft_risk_level", "critical"
+            ),
+            "soft_confidence_threshold": _summary_or_meta(
+                run_summary, run_meta, "soft_confidence_threshold", 0.7
+            ),
+            "agent_model": _summary_or_meta(run_summary, run_meta, "agent_model"),
+            "user_model": _summary_or_meta(run_summary, run_meta, "user_model"),
+            "evaluator_model": _summary_or_meta(
+                run_summary, run_meta, "evaluator_model"
+            ),
+            "predictor_model": _summary_or_meta(
+                run_summary, run_meta, "predictor_model"
+            ),
         },
         "metrics": {
-            "success_rate": run_summary.get("success_rate", 0.0),
-            "avg_steps": run_summary.get("avg_steps", 0.0),
-            "predictor_called": run_summary.get("predictor_called", 0),
-            "high_risk_count": run_summary.get("high_risk_count", 0),
-            "critical_risk_count": run_summary.get("critical_risk_count", 0),
+            "success_rate": _present(run_summary, "success_rate", 0.0),
+            "avg_steps": _present(run_summary, "avg_steps", 0.0),
+            "predictor_called": _present(run_summary, "predictor_called", 0),
+            "high_risk_count": _present(run_summary, "high_risk_count", 0),
+            "critical_risk_count": _present(run_summary, "critical_risk_count", 0),
+            "had_high_risk_warning": sum(
+                1 for item in task_summaries if item.get("had_high_risk_warning")
+            ),
+            "had_critical_risk_warning": sum(
+                1 for item in task_summaries if item.get("had_critical_risk_warning")
+            ),
             "had_high_risk_warning_count": sum(
                 1 for item in task_summaries if item.get("had_high_risk_warning")
             ),
@@ -130,8 +184,16 @@ def build_analysis(run_dir: Path) -> dict[str, Any]:
             ),
             "failed_tasks_with_high_or_critical_warning": failed_with_warning,
             "success_tasks_with_high_or_critical_warning": success_with_warning,
-            "revise_once_count": run_summary.get("revise_once_count", 0),
-            "changed_by_controller_count": run_summary.get("changed_by_controller_count", 0),
+            "revise_once_count": _present(run_summary, "revise_once_count", 0),
+            "changed_by_controller_count": _present(
+                run_summary, "changed_by_controller_count", 0
+            ),
+            "soft_risk_level": _summary_or_meta(
+                run_summary, run_meta, "soft_risk_level", "critical"
+            ),
+            "soft_confidence_threshold": _summary_or_meta(
+                run_summary, run_meta, "soft_confidence_threshold", 0.7
+            ),
         },
         "warning_vs_final_outcome": {
             "failed_tasks_with_high_or_critical_warning": failed_with_warning,
@@ -162,6 +224,10 @@ def write_markdown(path: Path, analysis: dict[str, Any]) -> None:
         f"- Evaluator: {setting.get('evaluator_model')}",
         f"- Predictor: {setting.get('predictor_model')}",
         "",
+        "## Soft Intervention Setting",
+        f"- soft_risk_level: {setting.get('soft_risk_level')}",
+        f"- soft_confidence_threshold: {setting.get('soft_confidence_threshold')}",
+        "",
         "## Main Results",
         "| Metric | Value |",
         "|---|---:|",
@@ -171,6 +237,17 @@ def write_markdown(path: Path, analysis: dict[str, Any]) -> None:
             lines.append(f"| {key} | {value:.4f} |")
         else:
             lines.append(f"| {key} | {value} |")
+
+    lines.extend(
+        [
+            "",
+            "## Intervention Summary",
+            "| Metric | Value |",
+            "|---|---:|",
+            f"| revise_once_count | {metrics.get('revise_once_count', 0)} |",
+            f"| changed_by_controller_count | {metrics.get('changed_by_controller_count', 0)} |",
+        ]
+    )
 
     lines.extend(["", "## Predictor Warning Distribution", "| Risk Level | Count |", "|---|---:|"])
     risk_distribution = analysis.get("risk_distribution") or {}
@@ -240,14 +317,21 @@ def write_markdown(path: Path, analysis: dict[str, Any]) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("run_dir", type=Path)
+    parser.add_argument("run_dir", nargs="?", type=Path)
+    parser.add_argument("--run-name")
     parser.add_argument("--report-path", type=Path)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    run_dir = args.run_dir.resolve()
+    if args.run_name:
+        run_dir = PROJECT_ROOT / "runs" / args.run_name
+    elif args.run_dir is not None:
+        run_dir = args.run_dir
+    else:
+        raise SystemExit("Provide a run_dir or --run-name.")
+    run_dir = run_dir.resolve()
     analysis = build_analysis(run_dir)
     (run_dir / "analysis.json").write_text(
         json.dumps(analysis, indent=2, ensure_ascii=False), encoding="utf-8"

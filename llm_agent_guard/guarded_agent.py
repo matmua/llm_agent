@@ -22,7 +22,7 @@ from llm_agent_guard.schemas import (
 
 
 REVISION_TEMPLATE = """
-The previous proposed action was flagged as critical-risk by a general action consequence predictor.
+The previous proposed action was flagged as high-risk by a general action consequence predictor.
 
 Risk reason:
 {risk_reason}
@@ -45,7 +45,15 @@ class GuardedLLMAgentMixin:
         self.guard_domain = guard_config.get("domain")
         self.guard_task_id = str(getattr(task, "id", guard_config.get("task_id", "unknown")))
         self.guard_task_goal = _task_goal(task)
-        self.guard_controller = PredictiveController(self.guard_mode)
+        self.guard_soft_risk_level = guard_config.get("soft_risk_level", "critical")
+        self.guard_soft_confidence_threshold = float(
+            guard_config.get("soft_confidence_threshold", 0.7)
+        )
+        self.guard_controller = PredictiveController(
+            self.guard_mode,
+            soft_risk_level=self.guard_soft_risk_level,
+            soft_confidence_threshold=self.guard_soft_confidence_threshold,
+        )
         self.guard_logger = JsonlRunLogger(
             self.guard_run_name,
             root=Path(guard_config.get("runs_root", "runs")),
@@ -110,7 +118,7 @@ class GuardedLLMAgentMixin:
                     **self.llm_args,
                 )
                 executed_action = _message_to_action(executed_message)
-                changed = True
+                changed = _actions_differ(proposed_action, executed_action)
 
         return executed_message, proposed_action, executed_action, prediction, decision, changed
 
@@ -129,6 +137,8 @@ class GuardedLLMAgentMixin:
             "task_id": self.guard_task_id,
             "step": self.guard_step,
             "mode": self.guard_mode,
+            "soft_risk_level": self.guard_soft_risk_level,
+            "soft_confidence_threshold": self.guard_soft_confidence_threshold,
             "proposed_action": asdict(proposed_action),
             "executed_action": asdict(executed_action),
             "prediction": _dataclass_or_none(prediction),
@@ -300,3 +310,7 @@ def _dataclass_or_none(value: Any) -> Optional[dict[str, Any]]:
     if value is None:
         return None
     return to_jsonable(value)
+
+
+def _actions_differ(left: ProposedAction, right: ProposedAction) -> bool:
+    return to_jsonable(left) != to_jsonable(right)

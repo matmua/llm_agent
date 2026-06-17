@@ -218,6 +218,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--predictor-base-url")
     parser.add_argument("--predictor-api-key-env")
     parser.add_argument(
+        "--soft-risk-level",
+        choices=["low", "medium", "high", "critical"],
+        default="critical",
+    )
+    parser.add_argument("--soft-confidence-threshold", type=float, default=0.7)
+    parser.add_argument(
         "--mode",
         choices=["direct", "predictor_shadow", "predictor_soft"],
         default="direct",
@@ -248,6 +254,8 @@ def summarize_task_rows(
     domain: str,
     task_id: str,
     mode: str,
+    soft_risk_level: str,
+    soft_confidence_threshold: float,
     rows: list[dict[str, Any]],
     final_success: bool,
 ) -> dict[str, Any]:
@@ -274,6 +282,8 @@ def summarize_task_rows(
         "domain": domain,
         "task_id": task_id,
         "mode": mode,
+        "soft_risk_level": soft_risk_level,
+        "soft_confidence_threshold": soft_confidence_threshold,
         "final_success": final_success,
         "num_steps": len(rows),
         "predictor_called": predictor_called,
@@ -297,6 +307,8 @@ def collect_guard_stats(
     domain: str,
     task_ids: list[str],
     mode: str,
+    soft_risk_level: str,
+    soft_confidence_threshold: float,
     final_success_by_task: dict[str, bool],
 ) -> dict[str, Any]:
     stats = {
@@ -325,6 +337,8 @@ def collect_guard_stats(
             domain=domain,
             task_id=task_id,
             mode=mode,
+            soft_risk_level=soft_risk_level,
+            soft_confidence_threshold=soft_confidence_threshold,
             rows=rows,
             final_success=final_success_by_task.get(task_id, False),
         )
@@ -361,6 +375,8 @@ def redacted_config(args: argparse.Namespace, task_ids: list[str]) -> dict[str, 
         "task_split": args.task_split,
         "task_ids": task_ids,
         "mode": args.mode,
+        "soft_risk_level": args.soft_risk_level,
+        "soft_confidence_threshold": args.soft_confidence_threshold,
         "agent_model": args.agent_model,
         "agent_base_url": args.agent_base_url,
         "agent_api_key": "<redacted>",
@@ -450,6 +466,8 @@ def main() -> None:
         "run_name": run_name,
         "domain": args.domain,
         "runs_root": str(RUNS_ROOT),
+        "soft_risk_level": args.soft_risk_level,
+        "soft_confidence_threshold": args.soft_confidence_threshold,
         "predictor": {
             "model": predictor_model,
             "base_url": predictor_base_url,
@@ -536,6 +554,8 @@ def main() -> None:
         domain=args.domain,
         task_ids=task_id_list,
         mode=args.mode,
+        soft_risk_level=args.soft_risk_level,
+        soft_confidence_threshold=args.soft_confidence_threshold,
         final_success_by_task=final_success_by_task,
     )
     summary = {
@@ -543,6 +563,8 @@ def main() -> None:
         "domain": args.domain,
         "task_ids": task_id_list,
         "mode": args.mode,
+        "soft_risk_level": args.soft_risk_level,
+        "soft_confidence_threshold": args.soft_confidence_threshold,
         "agent_model": args.agent_model,
         "user_model": args.user_model,
         "evaluator_model": args.evaluator_model,

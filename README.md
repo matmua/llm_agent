@@ -20,7 +20,7 @@ evaluator LLM, or optional predictor LLM.
 
 - `direct`: baseline, no predictor.
 - `predictor_shadow`: predictor logs structured warnings but does not intervene.
-- `predictor_soft`: predictor may request one action revision only for critical high-confidence risk.
+- `predictor_soft`: predictor may request one action revision only when the configured risk/confidence threshold is met. The default threshold preserves the original critical/0.7 behavior.
 
 ## What This Repo Does Not Do
 
@@ -37,12 +37,35 @@ evaluator LLM, or optional predictor LLM.
 
 - `scripts/run_tau3.py`: unified runner for direct, shadow, and soft modes.
 - `scripts/analyze_tau3_results.py`: analysis for predictor-only guard logs.
+- `scripts/compare_runs.py`: side-by-side comparison for multiple tau3 runs.
+- `scripts/export_tau3_task_logs.py`: exports ignored `runs/` task logs into commit-friendly reports.
 - `llm_agent_guard/`: generic predictor, controller, logging, and agent wrapper.
 - `archive/plan_first/`: older plan-first experiment files.
 - `archive/unused_comparator/`: comparator code archived because this stage does not use it.
 - `reports/`: human-readable reports.
 - `runs/`: local run outputs, ignored by git.
 - `trajectories/`: earlier baseline trajectories retained for reference.
+
+## Current Retail 0-19 Result
+
+The current complete retail 0-19 experiments use local Qwen for agent, user
+simulator, evaluator, and predictor. DeepSeek is not used in these complete
+0-19 runs.
+
+| Run | Mode | Success | Success Rate | Revise Once | Changed By Controller |
+|---|---|---:|---:|---:|---:|
+| `retail_0_19_direct_qwen_user_eval` | direct | 2/20 | 0.1000 | 0 | 0 |
+| `retail_0_19_shadow_qwen_predictor_qwen_user_eval` | predictor_shadow | 3/20 | 0.1500 | 0 | 0 |
+| `retail_0_19_soft_high06_qwen_predictor_qwen_user_eval` | predictor_soft high/0.6 | 2/20 | 0.1000 | 18 | 14 |
+
+`retail_0_19_soft_high07_qwen_predictor_qwen_user_eval` was interrupted and is
+kept only as a partial log, not as a complete accuracy result.
+
+Main reports:
+
+- `reports/soft_intervention_experiment_report.md`
+- `reports/retail_0_19_soft_comparison.md`
+- `reports/retail_0_19_task_logs/`
 
 ## Environment Variables
 
