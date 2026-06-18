@@ -93,9 +93,38 @@ def load_task_summaries(run_dir: Path) -> list[dict[str, Any]]:
                 "changed_by_controller_count": sum(
                     1 for row in rows if row.get("changed_by_controller")
                 ),
+                "controller_version": _first_row_value(rows, "controller_version", ""),
                 "soft_risk_level": _first_row_value(rows, "soft_risk_level", "critical"),
                 "soft_confidence_threshold": _first_row_value(
                     rows, "soft_confidence_threshold", 0.7
+                ),
+                "soft_intervention_confidence_threshold": _first_row_value(
+                    rows, "soft_intervention_confidence_threshold", 0.6
+                ),
+                "constraint_guided_revise_count": sum(
+                    1
+                    for row in rows
+                    if (row.get("controller_decision") or {}).get("decision")
+                    == "revise_once"
+                ),
+                "second_check_count": sum(
+                    1 for row in rows if row.get("revised_prediction")
+                ),
+                "risk_reduced_after_revision_count": sum(
+                    1 for row in rows if row.get("risk_reduced_after_revision")
+                ),
+                "fallback_used_count": sum(1 for row in rows if row.get("fallback_used")),
+                "invalid_revised_action_count": sum(
+                    1 for row in rows if row.get("revised_action_valid") is False
+                ),
+                "executed_original_count": sum(
+                    1 for row in rows if row.get("executed_action_source") == "original"
+                ),
+                "executed_revised_count": sum(
+                    1 for row in rows if row.get("executed_action_source") == "revised"
+                ),
+                "executed_fallback_count": sum(
+                    1 for row in rows if row.get("executed_action_source") == "fallback"
                 ),
             }
         )
@@ -149,11 +178,20 @@ def build_analysis(run_dir: Path) -> dict[str, Any]:
             "domain": _summary_or_meta(run_summary, run_meta, "domain"),
             "task_ids": _summary_or_meta(run_summary, run_meta, "task_ids", []),
             "mode": _summary_or_meta(run_summary, run_meta, "mode"),
+            "controller_version": _summary_or_meta(
+                run_summary, run_meta, "controller_version", ""
+            ),
             "soft_risk_level": _summary_or_meta(
-                run_summary, run_meta, "soft_risk_level", "critical"
+                run_summary, run_meta, "soft_risk_level", "high"
             ),
             "soft_confidence_threshold": _summary_or_meta(
-                run_summary, run_meta, "soft_confidence_threshold", 0.7
+                run_summary, run_meta, "soft_confidence_threshold", 0.6
+            ),
+            "soft_intervention_confidence_threshold": _summary_or_meta(
+                run_summary,
+                run_meta,
+                "soft_intervention_confidence_threshold",
+                0.6,
             ),
             "agent_model": _summary_or_meta(run_summary, run_meta, "agent_model"),
             "user_model": _summary_or_meta(run_summary, run_meta, "user_model"),
@@ -189,10 +227,39 @@ def build_analysis(run_dir: Path) -> dict[str, Any]:
                 run_summary, "changed_by_controller_count", 0
             ),
             "soft_risk_level": _summary_or_meta(
-                run_summary, run_meta, "soft_risk_level", "critical"
+                run_summary, run_meta, "soft_risk_level", "high"
             ),
             "soft_confidence_threshold": _summary_or_meta(
-                run_summary, run_meta, "soft_confidence_threshold", 0.7
+                run_summary, run_meta, "soft_confidence_threshold", 0.6
+            ),
+            "soft_intervention_confidence_threshold": _summary_or_meta(
+                run_summary,
+                run_meta,
+                "soft_intervention_confidence_threshold",
+                0.6,
+            ),
+            "controller_version": _summary_or_meta(
+                run_summary, run_meta, "controller_version", ""
+            ),
+            "constraint_guided_revise_count": _present(
+                run_summary, "constraint_guided_revise_count", 0
+            ),
+            "second_check_count": _present(run_summary, "second_check_count", 0),
+            "risk_reduced_after_revision_count": _present(
+                run_summary, "risk_reduced_after_revision_count", 0
+            ),
+            "fallback_used_count": _present(run_summary, "fallback_used_count", 0),
+            "invalid_revised_action_count": _present(
+                run_summary, "invalid_revised_action_count", 0
+            ),
+            "executed_original_count": _present(
+                run_summary, "executed_original_count", 0
+            ),
+            "executed_revised_count": _present(
+                run_summary, "executed_revised_count", 0
+            ),
+            "executed_fallback_count": _present(
+                run_summary, "executed_fallback_count", 0
             ),
         },
         "warning_vs_final_outcome": {
@@ -205,6 +272,20 @@ def build_analysis(run_dir: Path) -> dict[str, Any]:
         "first_high_risk_step_distribution": dict(first_high_distribution),
         "task_summaries": task_summaries,
     }
+    metrics = analysis["metrics"]
+    second_check_count = int(metrics.get("second_check_count", 0) or 0)
+    constraint_count = int(metrics.get("constraint_guided_revise_count", 0) or 0)
+    metrics["risk_reduction_rate"] = (
+        float(metrics.get("risk_reduced_after_revision_count", 0) or 0)
+        / second_check_count
+        if second_check_count
+        else 0.0
+    )
+    metrics["fallback_rate"] = (
+        float(metrics.get("fallback_used_count", 0) or 0) / constraint_count
+        if constraint_count
+        else 0.0
+    )
     return analysis
 
 
@@ -219,6 +300,7 @@ def write_markdown(path: Path, analysis: dict[str, Any]) -> None:
         f"- Domain: {setting.get('domain')}",
         f"- Task IDs: {setting.get('task_ids')}",
         f"- Mode: {setting.get('mode')}",
+        f"- Controller version: {setting.get('controller_version')}",
         f"- Agent: {setting.get('agent_model')}",
         f"- User simulator: {setting.get('user_model')}",
         f"- Evaluator: {setting.get('evaluator_model')}",
@@ -227,6 +309,8 @@ def write_markdown(path: Path, analysis: dict[str, Any]) -> None:
         "## Soft Intervention Setting",
         f"- soft_risk_level: {setting.get('soft_risk_level')}",
         f"- soft_confidence_threshold: {setting.get('soft_confidence_threshold')}",
+        "- soft_intervention_confidence_threshold: "
+        f"{setting.get('soft_intervention_confidence_threshold')}",
         "",
         "## Main Results",
         "| Metric | Value |",
@@ -246,6 +330,25 @@ def write_markdown(path: Path, analysis: dict[str, Any]) -> None:
             "|---|---:|",
             f"| revise_once_count | {metrics.get('revise_once_count', 0)} |",
             f"| changed_by_controller_count | {metrics.get('changed_by_controller_count', 0)} |",
+        ]
+    )
+
+    lines.extend(
+        [
+            "",
+            "## Controller v2 Summary",
+            "| Metric | Value |",
+            "|---|---:|",
+            f"| Constraint-guided revise count | {metrics.get('constraint_guided_revise_count', 0)} |",
+            f"| Second check count | {metrics.get('second_check_count', 0)} |",
+            f"| Risk reduced after revision | {metrics.get('risk_reduced_after_revision_count', 0)} |",
+            f"| Risk reduction rate | {float(metrics.get('risk_reduction_rate', 0.0)):.4f} |",
+            f"| Invalid revised action count | {metrics.get('invalid_revised_action_count', 0)} |",
+            f"| Fallback used count | {metrics.get('fallback_used_count', 0)} |",
+            f"| Fallback rate | {float(metrics.get('fallback_rate', 0.0)):.4f} |",
+            f"| Executed original | {metrics.get('executed_original_count', 0)} |",
+            f"| Executed revised | {metrics.get('executed_revised_count', 0)} |",
+            f"| Executed fallback | {metrics.get('executed_fallback_count', 0)} |",
         ]
     )
 
@@ -286,13 +389,13 @@ def write_markdown(path: Path, analysis: dict[str, Any]) -> None:
         [
             "",
             "## Per-task Summary",
-            "| Task ID | Success | Steps | High Risk | Critical Risk | First High Risk Step | First Critical Risk Step | Revise Once |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|",
+            "| Task ID | Success | Steps | High Risk | Critical Risk | First High Risk Step | First Critical Risk Step | Revise Once | Constraint Revise | Second Check | Fallback | Executed Revised |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     for item in analysis["task_summaries"]:
         lines.append(
-            "| {task_id} | {success} | {steps} | {high} | {critical} | {first_high} | {first_critical} | {revise} |".format(
+            "| {task_id} | {success} | {steps} | {high} | {critical} | {first_high} | {first_critical} | {revise} | {constraint_revise} | {second_check} | {fallback} | {executed_revised} |".format(
                 task_id=item.get("task_id"),
                 success=bool(item.get("final_success")),
                 steps=item.get("num_steps", 0),
@@ -301,6 +404,10 @@ def write_markdown(path: Path, analysis: dict[str, Any]) -> None:
                 first_high=item.get("first_high_risk_step"),
                 first_critical=item.get("first_critical_risk_step"),
                 revise=item.get("revise_once_count", 0),
+                constraint_revise=item.get("constraint_guided_revise_count", 0),
+                second_check=item.get("second_check_count", 0),
+                fallback=item.get("fallback_used_count", 0),
+                executed_revised=item.get("executed_revised_count", 0),
             )
         )
 

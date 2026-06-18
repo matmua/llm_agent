@@ -76,6 +76,7 @@ def numeric_task_ids(runs: list[dict[str, Any]]) -> list[str]:
 def run_row(run: dict[str, Any]) -> str:
     return (
         f"| {run.get('run_name')} | {value(run, 'mode', 'missing')} | "
+        f"{value(run, 'controller_version', 'missing')} | "
         f"{value(run, 'soft_risk_level', 'missing')} | "
         f"{value(run, 'soft_confidence_threshold', 'missing')} | "
         f"{rate_text(run)} | {value(run, 'success_count', 'missing')} | "
@@ -84,7 +85,14 @@ def run_row(run: dict[str, Any]) -> str:
         f"{value(run, 'high_risk_count', 'missing')} | "
         f"{value(run, 'critical_risk_count', 'missing')} | "
         f"{value(run, 'revise_once_count', 'missing')} | "
-        f"{value(run, 'changed_by_controller_count', 'missing')} |"
+        f"{value(run, 'changed_by_controller_count', 'missing')} | "
+        f"{value(run, 'constraint_guided_revise_count', 'missing')} | "
+        f"{value(run, 'second_check_count', 'missing')} | "
+        f"{value(run, 'risk_reduced_after_revision_count', 'missing')} | "
+        f"{value(run, 'fallback_used_count', 'missing')} | "
+        f"{value(run, 'invalid_revised_action_count', 'missing')} | "
+        f"{value(run, 'executed_revised_count', 'missing')} | "
+        f"{value(run, 'executed_fallback_count', 'missing')} |"
     )
 
 
@@ -136,18 +144,12 @@ def task_value(run: dict[str, Any], task_id: str, key: str) -> Any:
 
 
 def write_report(runs: list[dict[str, Any]], output: Path) -> None:
-    labels = {
-        "direct": runs[0] if len(runs) > 0 else {},
-        "shadow": runs[1] if len(runs) > 1 else {},
-        "soft06": runs[2] if len(runs) > 2 else {},
-        "soft07": runs[3] if len(runs) > 3 else {},
-    }
     lines = [
-        "# Retail 0-19 Soft Intervention Comparison",
+        "# Tau3 Run Comparison",
         "",
         "## Runs",
-        "| Run | Mode | Soft Risk Level | Soft Confidence | Success Rate | Success Count | Num Tasks | Avg Steps | Predictor Called | High Risk | Critical Risk | Revise Once | Changed By Controller |",
-        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Run | Mode | Controller Version | Soft Risk Level | Soft Confidence | Success Rate | Success Count | Num Tasks | Avg Steps | Predictor Called | High Risk | Critical Risk | Revise Once | Changed By Controller | Constraint Revise | Second Check | Risk Reduced | Fallback Used | Invalid Revised Action | Executed Revised | Executed Fallback |",
+        "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     lines.extend(run_row(run) for run in runs)
     missing = [run for run in runs if run.get("missing")]
@@ -169,24 +171,39 @@ def write_report(runs: list[dict[str, Any]], output: Path) -> None:
         [
             "",
             "## Per-task Comparison",
-            "| Task ID | Direct Success | Shadow Success | Soft 0.6 Success | Soft 0.7 Success | Soft 0.6 Revised | Soft 0.7 Revised |",
-            "|---|---:|---:|---:|---:|---:|---:|",
+            "| Task ID | Run | Success | Constraint Revise | Second Check | Risk Reduced | Fallback | Executed Revised | Executed Fallback |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     for task_id in numeric_task_ids(runs):
-        soft06_revised = task_value(labels["soft06"], task_id, "revise_once_count")
-        soft07_revised = task_value(labels["soft07"], task_id, "revise_once_count")
-        lines.append(
-            "| {task_id} | {direct} | {shadow} | {soft06} | {soft07} | {soft06_revised} | {soft07_revised} |".format(
-                task_id=task_id,
-                direct=bool_text(task_value(labels["direct"], task_id, "final_success")),
-                shadow=bool_text(task_value(labels["shadow"], task_id, "final_success")),
-                soft06=bool_text(task_value(labels["soft06"], task_id, "final_success")),
-                soft07=bool_text(task_value(labels["soft07"], task_id, "final_success")),
-                soft06_revised=soft06_revised if soft06_revised is not None else "missing",
-                soft07_revised=soft07_revised if soft07_revised is not None else "missing",
+        for run in runs:
+            if run.get("missing"):
+                continue
+            lines.append(
+                "| {task_id} | {run_name} | {success} | {constraint_revise} | {second_check} | {risk_reduced} | {fallback} | {executed_revised} | {executed_fallback} |".format(
+                    task_id=task_id,
+                    run_name=run.get("run_name"),
+                    success=bool_text(task_value(run, task_id, "final_success")),
+                    constraint_revise=task_value(
+                        run, task_id, "constraint_guided_revise_count"
+                    )
+                    or 0,
+                    second_check=task_value(run, task_id, "second_check_count") or 0,
+                    risk_reduced=task_value(
+                        run, task_id, "risk_reduced_after_revision_count"
+                    )
+                    or 0,
+                    fallback=task_value(run, task_id, "fallback_used_count") or 0,
+                    executed_revised=task_value(
+                        run, task_id, "executed_revised_count"
+                    )
+                    or 0,
+                    executed_fallback=task_value(
+                        run, task_id, "executed_fallback_count"
+                    )
+                    or 0,
+                )
             )
-        )
 
     output = output if output.is_absolute() else PROJECT_ROOT / output
     output.parent.mkdir(parents=True, exist_ok=True)

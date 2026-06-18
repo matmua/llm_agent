@@ -18,6 +18,14 @@ class GuardRunStats:
     critical_risk_count: int = 0
     revise_once_count: int = 0
     changed_by_controller_count: int = 0
+    constraint_guided_revise_count: int = 0
+    second_check_count: int = 0
+    risk_reduced_after_revision_count: int = 0
+    fallback_used_count: int = 0
+    invalid_revised_action_count: int = 0
+    executed_original_count: int = 0
+    executed_revised_count: int = 0
+    executed_fallback_count: int = 0
     per_task_steps: dict[str, int] = field(default_factory=dict)
 
 
@@ -47,5 +55,21 @@ class JsonlRunLogger:
                 self.stats.critical_risk_count += 1
         if decision.get("decision") == "revise_once":
             self.stats.revise_once_count += 1
+            self.stats.constraint_guided_revise_count += 1
         if row.get("changed_by_controller"):
             self.stats.changed_by_controller_count += 1
+        if row.get("revised_prediction"):
+            self.stats.second_check_count += 1
+        if row.get("risk_reduced_after_revision"):
+            self.stats.risk_reduced_after_revision_count += 1
+        if row.get("fallback_used"):
+            self.stats.fallback_used_count += 1
+        if row.get("revised_action_valid") is False:
+            self.stats.invalid_revised_action_count += 1
+        source = row.get("executed_action_source")
+        if source == "original":
+            self.stats.executed_original_count += 1
+        elif source == "revised":
+            self.stats.executed_revised_count += 1
+        elif source == "fallback":
+            self.stats.executed_fallback_count += 1

@@ -50,6 +50,10 @@ def truncate(value: Any, limit: int = 180) -> str:
     return text[: limit - 3] + "..."
 
 
+def md(value: Any, limit: int = 180) -> str:
+    return truncate(value, limit).replace("|", "\\|")
+
+
 def action_label(action: dict[str, Any] | None) -> str:
     if not action:
         return ""
@@ -121,8 +125,10 @@ def export_run(label: str, run_name: str, output_dir: Path) -> Path:
         f"- Run: `{run_name}`",
         f"- Status: {'complete' if complete else 'partial/interrupted'}",
         f"- Mode: `{summary.get('mode') or run_meta.get('mode')}`",
+        f"- Controller version: `{summary.get('controller_version') or run_meta.get('controller_version')}`",
         f"- Agent/User/Evaluator/Predictor: `{summary.get('agent_model') or run_meta.get('agent_model')}` / `{summary.get('user_model') or run_meta.get('user_model')}` / `{summary.get('evaluator_model') or run_meta.get('evaluator_model')}` / `{summary.get('predictor_model') or run_meta.get('predictor_model')}`",
         f"- Soft risk/confidence: `{summary.get('soft_risk_level') or run_meta.get('soft_risk_level')}` / `{summary.get('soft_confidence_threshold') or run_meta.get('soft_confidence_threshold')}`",
+        f"- Soft intervention confidence: `{summary.get('soft_intervention_confidence_threshold') or run_meta.get('soft_intervention_confidence_threshold')}`",
         "",
         "## Run Summary",
         "| Metric | Value |",
@@ -138,6 +144,14 @@ def export_run(label: str, run_name: str, output_dir: Path) -> Path:
         "critical_risk_count",
         "revise_once_count",
         "changed_by_controller_count",
+        "constraint_guided_revise_count",
+        "second_check_count",
+        "risk_reduced_after_revision_count",
+        "fallback_used_count",
+        "invalid_revised_action_count",
+        "executed_original_count",
+        "executed_revised_count",
+        "executed_fallback_count",
         "had_warning_failed_tasks",
         "had_warning_success_tasks",
     ]
@@ -151,8 +165,8 @@ def export_run(label: str, run_name: str, output_dir: Path) -> Path:
         [
             "",
             "## Per-task Overview",
-            "| Task | Success | Reward | Termination | Steps | Predictor | High | Critical | Revise | Changed | First High | First Critical |",
-            "|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+            "| Task | Success | Reward | Termination | Steps | Predictor | High | Critical | Revise | Changed | Constraint Revise | Second Check | Risk Reduced | Fallback | Executed Revised | Executed Fallback |",
+            "|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     summaries = {}
@@ -165,7 +179,7 @@ def export_run(label: str, run_name: str, output_dir: Path) -> Path:
         reward = reward_info.get("reward")
         termination = reward_by_task.get(task_id, {}).get("termination_reason")
         lines.append(
-            "| {task} | {success} | {reward} | {termination} | {steps} | {predictor} | {high} | {critical} | {revise} | {changed} | {first_high} | {first_critical} |".format(
+            "| {task} | {success} | {reward} | {termination} | {steps} | {predictor} | {high} | {critical} | {revise} | {changed} | {constraint_revise} | {second_check} | {risk_reduced} | {fallback} | {executed_revised} | {executed_fallback} |".format(
                 task=task_id,
                 success=item.get("final_success", "n/a"),
                 reward=reward if reward is not None else "n/a",
@@ -176,8 +190,12 @@ def export_run(label: str, run_name: str, output_dir: Path) -> Path:
                 critical=item.get("critical_risk_count", "n/a"),
                 revise=item.get("revise_once_count", "n/a"),
                 changed=item.get("changed_by_controller_count", "n/a"),
-                first_high=item.get("first_high_risk_step", ""),
-                first_critical=item.get("first_critical_risk_step", ""),
+                constraint_revise=item.get("constraint_guided_revise_count", "n/a"),
+                second_check=item.get("second_check_count", "n/a"),
+                risk_reduced=item.get("risk_reduced_after_revision_count", "n/a"),
+                fallback=item.get("fallback_used_count", "n/a"),
+                executed_revised=item.get("executed_revised_count", "n/a"),
+                executed_fallback=item.get("executed_fallback_count", "n/a"),
             )
         )
 
@@ -199,6 +217,7 @@ def export_run(label: str, run_name: str, output_dir: Path) -> Path:
                 f"- Duration seconds: `{reward_entry.get('duration', 'n/a')}`",
                 f"- Steps logged: `{len(rows)}`",
                 f"- Predictor/high/critical/revise/changed: `{task_summary.get('predictor_called', 'n/a')}` / `{task_summary.get('high_risk_count', 'n/a')}` / `{task_summary.get('critical_risk_count', 'n/a')}` / `{task_summary.get('revise_once_count', 'n/a')}` / `{task_summary.get('changed_by_controller_count', 'n/a')}`",
+                f"- Controller v2 counts: constraint revise `{task_summary.get('constraint_guided_revise_count', 'n/a')}`, second check `{task_summary.get('second_check_count', 'n/a')}`, risk reduced `{task_summary.get('risk_reduced_after_revision_count', 'n/a')}`, fallback `{task_summary.get('fallback_used_count', 'n/a')}`",
                 "",
                 "Failed expected action checks:",
             ]
@@ -211,24 +230,37 @@ def export_run(label: str, run_name: str, output_dir: Path) -> Path:
             [
                 "",
                 "Step log:",
-                "| Step | Proposed | Executed | Changed | Risk | Conf | Recommendation | Decision | Reason |",
-                "|---:|---|---|---:|---|---:|---|---|---|",
+                "| Step | Proposed | Executed | Source | Changed | Risk | Conf | IntConf | Actionable | Preferred | Recommendation | Decision | Unsafe Summary | Safe Constraint | Forbidden Pattern | Revised | Revised Risk | Risk Reduced | Valid Revised | Fallback | Reason |",
+                "|---:|---|---|---|---:|---|---:|---:|---|---|---|---|---|---|---|---|---|---:|---:|---:|---|",
             ]
         )
         for row in rows:
             pred = row.get("prediction") or {}
             decision = row.get("controller_decision") or {}
+            revised_pred = row.get("revised_prediction") or {}
             lines.append(
-                "| {step} | {proposed} | {executed} | {changed} | {risk} | {confidence} | {recommendation} | {decision} | {reason} |".format(
+                "| {step} | {proposed} | {executed} | {source} | {changed} | {risk} | {confidence} | {intervention_confidence} | {actionability} | {preferred} | {recommendation} | {decision} | {unsafe} | {constraint} | {forbidden} | {revised} | {revised_risk} | {risk_reduced} | {valid_revised} | {fallback} | {reason} |".format(
                     step=row.get("step"),
-                    proposed=action_label(row.get("proposed_action")).replace("|", "\\|"),
-                    executed=action_label(row.get("executed_action")).replace("|", "\\|"),
+                    proposed=md(action_label(row.get("proposed_action"))),
+                    executed=md(action_label(row.get("executed_action"))),
+                    source=row.get("executed_action_source", ""),
                     changed=bool(row.get("changed_by_controller")),
                     risk=pred.get("risk_level", ""),
                     confidence=pred.get("confidence", ""),
+                    intervention_confidence=pred.get("intervention_confidence", ""),
+                    actionability=pred.get("actionability", ""),
+                    preferred=pred.get("preferred_action_type", ""),
                     recommendation=pred.get("recommendation", ""),
                     decision=decision.get("decision", ""),
-                    reason=truncate(decision.get("reason"), 120).replace("|", "\\|"),
+                    unsafe=md(pred.get("unsafe_action_summary"), 120),
+                    constraint=md(pred.get("safe_action_constraint"), 140),
+                    forbidden=md(pred.get("forbidden_action_pattern"), 120),
+                    revised=md(action_label(row.get("revised_action"))),
+                    revised_risk=revised_pred.get("risk_level", ""),
+                    risk_reduced=bool(row.get("risk_reduced_after_revision")),
+                    valid_revised=row.get("revised_action_valid", ""),
+                    fallback=bool(row.get("fallback_used")),
+                    reason=md(row.get("fallback_reason") or decision.get("reason"), 120),
                 )
             )
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -237,6 +269,10 @@ def export_run(label: str, run_name: str, output_dir: Path) -> Path:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--runs",
+        help="Comma-separated run names. Defaults to the built-in retail 0-19 local runs.",
+    )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     return parser.parse_args()
 
@@ -245,7 +281,15 @@ def main() -> None:
     args = parse_args()
     output_dir = args.output_dir if args.output_dir.is_absolute() else PROJECT_ROOT / args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
-    for label, run_name in RUNS.items():
+    if args.runs:
+        runs = {
+            run_name.strip(): run_name.strip()
+            for run_name in args.runs.split(",")
+            if run_name.strip()
+        }
+    else:
+        runs = RUNS
+    for label, run_name in runs.items():
         path = export_run(label, run_name, output_dir)
         print(f"wrote {path}")
 

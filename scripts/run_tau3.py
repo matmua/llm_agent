@@ -107,21 +107,41 @@ def build_llm_args(
     max_tokens: int,
     enable_thinking: bool,
     response_format: bool = False,
+    extra_body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     args: dict[str, Any] = {
         "api_base": api_base,
         "temperature": temperature,
         "top_p": top_p,
         "max_tokens": max_tokens,
-        "extra_body": {
+    }
+    if extra_body is None:
+        extra_body = {
             "chat_template_kwargs": {
                 "enable_thinking": enable_thinking,
             }
-        },
-    }
+        }
+    if extra_body:
+        args["extra_body"] = extra_body
     if response_format:
         args["response_format"] = {"type": "json_object"}
     return args
+
+
+def provider_extra_body(model: str, base_url: str, enable_thinking: bool) -> dict[str, Any]:
+    model_lower = model.lower()
+    base_lower = base_url.lower()
+    if "deepseek" in model_lower or "deepseek" in base_lower:
+        return {
+            "thinking": {
+                "type": "enabled" if enable_thinking else "disabled",
+            }
+        }
+    return {
+        "chat_template_kwargs": {
+            "enable_thinking": enable_thinking,
+        }
+    }
 
 
 def patch_nl_evaluator(model: str, eval_llm_args: dict[str, Any]) -> None:
@@ -217,12 +237,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--predictor-model")
     parser.add_argument("--predictor-base-url")
     parser.add_argument("--predictor-api-key-env")
+    parser.add_argument("--controller-version", default="v2")
     parser.add_argument(
         "--soft-risk-level",
         choices=["low", "medium", "high", "critical"],
-        default="critical",
+        default="high",
     )
-    parser.add_argument("--soft-confidence-threshold", type=float, default=0.7)
+    parser.add_argument("--soft-confidence-threshold", type=float, default=0.6)
+    parser.add_argument(
+        "--soft-intervention-confidence-threshold",
+        type=float,
+        default=0.6,
+    )
     parser.add_argument(
         "--mode",
         choices=["direct", "predictor_shadow", "predictor_soft"],
@@ -239,8 +265,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--user-temperature", type=float, default=0.7)
     parser.add_argument("--top-p", type=float, default=0.8)
     parser.add_argument("--agent-max-tokens", type=int, default=768)
-    parser.add_argument("--user-max-tokens", type=int, default=512)
-    parser.add_argument("--eval-max-tokens", type=int, default=512)
+    parser.add_argument("--user-max-tokens", type=int, default=4096)
+    parser.add_argument("--eval-max-tokens", type=int, default=4096)
     parser.add_argument("--enable-thinking", action="store_true")
     parser.add_argument("--eval-response-format", action="store_true")
     parser.add_argument("--llm-log-mode", choices=["all", "latest"], default="all")
@@ -254,8 +280,10 @@ def summarize_task_rows(
     domain: str,
     task_id: str,
     mode: str,
+    controller_version: str,
     soft_risk_level: str,
     soft_confidence_threshold: float,
+    soft_intervention_confidence_threshold: float,
     rows: list[dict[str, Any]],
     final_success: bool,
 ) -> dict[str, Any]:
@@ -264,6 +292,14 @@ def summarize_task_rows(
     predictor_called = 0
     revise_once_count = 0
     changed_by_controller_count = 0
+    constraint_guided_revise_count = 0
+    second_check_count = 0
+    risk_reduced_after_revision_count = 0
+    fallback_used_count = 0
+    invalid_revised_action_count = 0
+    executed_original_count = 0
+    executed_revised_count = 0
+    executed_fallback_count = 0
     for row in rows:
         prediction = row.get("prediction") or {}
         decision = row.get("controller_decision") or {}
@@ -275,15 +311,35 @@ def summarize_task_rows(
                 critical_risk_steps.append(row.get("step"))
         if decision.get("decision") == "revise_once":
             revise_once_count += 1
+            constraint_guided_revise_count += 1
         if row.get("changed_by_controller"):
             changed_by_controller_count += 1
+        if row.get("revised_prediction"):
+            second_check_count += 1
+        if row.get("risk_reduced_after_revision"):
+            risk_reduced_after_revision_count += 1
+        if row.get("fallback_used"):
+            fallback_used_count += 1
+        if row.get("revised_action_valid") is False:
+            invalid_revised_action_count += 1
+        source = row.get("executed_action_source")
+        if source == "original":
+            executed_original_count += 1
+        elif source == "revised":
+            executed_revised_count += 1
+        elif source == "fallback":
+            executed_fallback_count += 1
     return {
         "run_name": run_name,
         "domain": domain,
         "task_id": task_id,
         "mode": mode,
+        "controller_version": controller_version,
         "soft_risk_level": soft_risk_level,
         "soft_confidence_threshold": soft_confidence_threshold,
+        "soft_intervention_confidence_threshold": (
+            soft_intervention_confidence_threshold
+        ),
         "final_success": final_success,
         "num_steps": len(rows),
         "predictor_called": predictor_called,
@@ -297,6 +353,14 @@ def summarize_task_rows(
         else None,
         "revise_once_count": revise_once_count,
         "changed_by_controller_count": changed_by_controller_count,
+        "constraint_guided_revise_count": constraint_guided_revise_count,
+        "second_check_count": second_check_count,
+        "risk_reduced_after_revision_count": risk_reduced_after_revision_count,
+        "fallback_used_count": fallback_used_count,
+        "invalid_revised_action_count": invalid_revised_action_count,
+        "executed_original_count": executed_original_count,
+        "executed_revised_count": executed_revised_count,
+        "executed_fallback_count": executed_fallback_count,
     }
 
 
@@ -307,8 +371,10 @@ def collect_guard_stats(
     domain: str,
     task_ids: list[str],
     mode: str,
+    controller_version: str,
     soft_risk_level: str,
     soft_confidence_threshold: float,
+    soft_intervention_confidence_threshold: float,
     final_success_by_task: dict[str, bool],
 ) -> dict[str, Any]:
     stats = {
@@ -317,6 +383,14 @@ def collect_guard_stats(
         "critical_risk_count": 0,
         "revise_once_count": 0,
         "changed_by_controller_count": 0,
+        "constraint_guided_revise_count": 0,
+        "second_check_count": 0,
+        "risk_reduced_after_revision_count": 0,
+        "fallback_used_count": 0,
+        "invalid_revised_action_count": 0,
+        "executed_original_count": 0,
+        "executed_revised_count": 0,
+        "executed_fallback_count": 0,
         "had_warning_failed_tasks": 0,
         "had_warning_success_tasks": 0,
     }
@@ -337,8 +411,12 @@ def collect_guard_stats(
             domain=domain,
             task_id=task_id,
             mode=mode,
+            controller_version=controller_version,
             soft_risk_level=soft_risk_level,
             soft_confidence_threshold=soft_confidence_threshold,
+            soft_intervention_confidence_threshold=(
+                soft_intervention_confidence_threshold
+            ),
             rows=rows,
             final_success=final_success_by_task.get(task_id, False),
         )
@@ -352,6 +430,17 @@ def collect_guard_stats(
         stats["critical_risk_count"] += task_summary["critical_risk_count"]
         stats["revise_once_count"] += task_summary["revise_once_count"]
         stats["changed_by_controller_count"] += task_summary["changed_by_controller_count"]
+        for key in [
+            "constraint_guided_revise_count",
+            "second_check_count",
+            "risk_reduced_after_revision_count",
+            "fallback_used_count",
+            "invalid_revised_action_count",
+            "executed_original_count",
+            "executed_revised_count",
+            "executed_fallback_count",
+        ]:
+            stats[key] += task_summary[key]
         had_warning = (
             task_summary["had_high_risk_warning"]
             or task_summary["had_critical_risk_warning"]
@@ -375,8 +464,12 @@ def redacted_config(args: argparse.Namespace, task_ids: list[str]) -> dict[str, 
         "task_split": args.task_split,
         "task_ids": task_ids,
         "mode": args.mode,
+        "controller_version": args.controller_version,
         "soft_risk_level": args.soft_risk_level,
         "soft_confidence_threshold": args.soft_confidence_threshold,
+        "soft_intervention_confidence_threshold": (
+            args.soft_intervention_confidence_threshold
+        ),
         "agent_model": args.agent_model,
         "agent_base_url": args.agent_base_url,
         "agent_api_key": "<redacted>",
@@ -389,6 +482,9 @@ def redacted_config(args: argparse.Namespace, task_ids: list[str]) -> dict[str, 
         "predictor_model": args.predictor_model,
         "predictor_base_url": args.predictor_base_url,
         "predictor_api_key_env": args.predictor_api_key_env,
+        "user_max_tokens": args.user_max_tokens,
+        "eval_max_tokens": args.eval_max_tokens,
+        "enable_thinking": args.enable_thinking,
     }
 
 
@@ -460,14 +556,23 @@ def main() -> None:
         top_p=args.top_p,
         max_tokens=args.agent_max_tokens,
         enable_thinking=args.enable_thinking,
+        extra_body=provider_extra_body(
+            args.agent_model,
+            args.agent_base_url,
+            args.enable_thinking,
+        ),
     )
     agent_llm_args["guard_config"] = {
         "mode": args.mode,
         "run_name": run_name,
         "domain": args.domain,
         "runs_root": str(RUNS_ROOT),
+        "controller_version": args.controller_version,
         "soft_risk_level": args.soft_risk_level,
         "soft_confidence_threshold": args.soft_confidence_threshold,
+        "soft_intervention_confidence_threshold": (
+            args.soft_intervention_confidence_threshold
+        ),
         "predictor": {
             "model": predictor_model,
             "base_url": predictor_base_url,
@@ -480,6 +585,11 @@ def main() -> None:
         top_p=args.top_p,
         max_tokens=args.user_max_tokens,
         enable_thinking=args.enable_thinking,
+        extra_body=provider_extra_body(
+            args.user_model,
+            args.user_base_url,
+            args.enable_thinking,
+        ),
     )
     eval_llm_args = build_llm_args(
         api_base=args.evaluator_base_url,
@@ -488,6 +598,11 @@ def main() -> None:
         max_tokens=args.eval_max_tokens,
         enable_thinking=False,
         response_format=args.eval_response_format,
+        extra_body=provider_extra_body(
+            args.evaluator_model,
+            args.evaluator_base_url,
+            False,
+        ),
     )
     patch_nl_evaluator(evaluator_model, eval_llm_args)
 
@@ -554,8 +669,12 @@ def main() -> None:
         domain=args.domain,
         task_ids=task_id_list,
         mode=args.mode,
+        controller_version=args.controller_version,
         soft_risk_level=args.soft_risk_level,
         soft_confidence_threshold=args.soft_confidence_threshold,
+        soft_intervention_confidence_threshold=(
+            args.soft_intervention_confidence_threshold
+        ),
         final_success_by_task=final_success_by_task,
     )
     summary = {
@@ -563,8 +682,12 @@ def main() -> None:
         "domain": args.domain,
         "task_ids": task_id_list,
         "mode": args.mode,
+        "controller_version": args.controller_version,
         "soft_risk_level": args.soft_risk_level,
         "soft_confidence_threshold": args.soft_confidence_threshold,
+        "soft_intervention_confidence_threshold": (
+            args.soft_intervention_confidence_threshold
+        ),
         "agent_model": args.agent_model,
         "user_model": args.user_model,
         "evaluator_model": args.evaluator_model,

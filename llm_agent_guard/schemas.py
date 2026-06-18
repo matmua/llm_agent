@@ -11,6 +11,14 @@ RiskLevel = Literal["low", "medium", "high", "critical"]
 TaskProgress = Literal["improve", "neutral", "degrade", "unknown"]
 Recoverability = Literal["easy", "medium", "hard", "irreversible"]
 Recommendation = Literal["execute", "revise", "ask_user", "recover", "stop"]
+PreferredActionType = Literal[
+    "ask_user",
+    "read_tool",
+    "write_tool",
+    "final_message",
+    "unknown",
+]
+Actionability = Literal["high", "medium", "low"]
 
 FailureMode = Literal[
     "none",
@@ -56,6 +64,12 @@ class OutcomePrediction:
     recoverability: Recoverability
     confidence: float
     recommendation: Recommendation
+    unsafe_action_summary: str = ""
+    safe_action_constraint: str = ""
+    forbidden_action_pattern: str = ""
+    preferred_action_type: PreferredActionType = "unknown"
+    actionability: Actionability = "medium"
+    intervention_confidence: float = 0.0
     raw_response: Optional[str] = None
 
 
@@ -131,6 +145,22 @@ def prediction_from_dict(data: dict[str, Any], raw_response: Optional[str]) -> O
             {"execute", "revise", "ask_user", "recover", "stop"},
             "execute",
         ),  # type: ignore[arg-type]
+        unsafe_action_summary=str(data.get("unsafe_action_summary") or ""),
+        safe_action_constraint=str(data.get("safe_action_constraint") or ""),
+        forbidden_action_pattern=str(data.get("forbidden_action_pattern") or ""),
+        preferred_action_type=coerce_literal(
+            data.get("preferred_action_type"),
+            {"ask_user", "read_tool", "write_tool", "final_message", "unknown"},
+            "unknown",
+        ),  # type: ignore[arg-type]
+        actionability=coerce_literal(
+            data.get("actionability"),
+            {"high", "medium", "low"},
+            "medium",
+        ),  # type: ignore[arg-type]
+        intervention_confidence=clamp_confidence(
+            data.get("intervention_confidence")
+        ),
         raw_response=raw_response,
     )
 
