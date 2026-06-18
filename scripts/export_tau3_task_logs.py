@@ -110,13 +110,64 @@ def task_ids_for_run(run_dir: Path, summary: dict[str, Any]) -> list[str]:
     return sorted(task_ids, key=task_sort_key)
 
 
-def export_run(label: str, run_name: str, output_dir: Path) -> Path:
+def summarize_task_from_rows(
+    task_id: str,
+    rows: list[dict[str, Any]],
+    reward_entry: dict[str, Any],
+) -> dict[str, Any]:
+    reward_info = reward_entry.get("reward_info") or {}
+    return {
+        "task_id": task_id,
+        "final_success": reward_info.get("reward") == 1.0,
+        "num_steps": len(rows),
+        "predictor_called": len(rows),
+        "high_risk_count": sum(
+            1 for row in rows if (row.get("prediction") or {}).get("risk_level") == "high"
+        ),
+        "critical_risk_count": sum(
+            1 for row in rows if (row.get("prediction") or {}).get("risk_level") == "critical"
+        ),
+        "revise_once_count": sum(
+            1 for row in rows if (row.get("controller_decision") or {}).get("decision") == "revise_once"
+        ),
+        "changed_by_controller_count": sum(1 for row in rows if row.get("changed_by_controller")),
+        "constraint_guided_revise_count": sum(
+            1 for row in rows if (row.get("controller_decision") or {}).get("decision") == "revise_once"
+        ),
+        "second_check_count": sum(1 for row in rows if row.get("revised_prediction")),
+        "risk_reduced_after_revision_count": sum(
+            1 for row in rows if row.get("risk_reduced_after_revision")
+        ),
+        "fallback_used_count": sum(1 for row in rows if row.get("fallback_used")),
+        "invalid_revised_action_count": sum(
+            1 for row in rows if row.get("revised_action_valid") is False
+        ),
+        "executed_original_count": sum(
+            1 for row in rows if row.get("executed_action_source") == "original"
+        ),
+        "executed_revised_count": sum(
+            1 for row in rows if row.get("executed_action_source") == "revised"
+        ),
+        "executed_fallback_count": sum(
+            1 for row in rows if row.get("executed_action_source") == "fallback"
+        ),
+    }
+
+
+def export_run(
+    label: str,
+    run_name: str,
+    output_dir: Path,
+    selected_task_ids: set[str] | None = None,
+) -> Path:
     run_dir = RUNS_ROOT / run_name
     summary_path = run_dir / "summary.json"
     summary = load_json(summary_path) if summary_path.exists() else {}
     run_meta = load_json(run_dir / "run_meta.json") if (run_dir / "run_meta.json").exists() else {}
     reward_by_task = load_reward_by_task(run_dir)
     task_ids = task_ids_for_run(run_dir, summary)
+    if selected_task_ids is not None:
+        task_ids = [task_id for task_id in task_ids if task_id in selected_task_ids]
     complete = bool(summary)
     output_path = output_dir / f"{label}.md"
     lines = [
@@ -174,7 +225,10 @@ def export_run(label: str, run_name: str, output_dir: Path) -> Path:
         item = load_json(path)
         summaries[str(item.get("task_id"))] = item
     for task_id in task_ids:
-        item = summaries.get(task_id, {})
+        rows = load_jsonl(run_dir / f"task_{task_id}.jsonl")
+        item = summaries.get(task_id) or summarize_task_from_rows(
+            task_id, rows, reward_by_task.get(task_id, {})
+        )
         reward_info = reward_by_task.get(task_id, {}).get("reward_info") or {}
         reward = reward_info.get("reward")
         termination = reward_by_task.get(task_id, {}).get("termination_reason")
@@ -201,10 +255,12 @@ def export_run(label: str, run_name: str, output_dir: Path) -> Path:
 
     lines.extend(["", "## Task Details"])
     for task_id in task_ids:
-        task_summary = summaries.get(task_id, {})
+        rows = load_jsonl(run_dir / f"task_{task_id}.jsonl")
+        task_summary = summaries.get(task_id) or summarize_task_from_rows(
+            task_id, rows, reward_by_task.get(task_id, {})
+        )
         reward_entry = reward_by_task.get(task_id, {})
         reward_info = reward_entry.get("reward_info") or {}
-        rows = load_jsonl(run_dir / f"task_{task_id}.jsonl")
         failed_checks = failed_action_checks(reward_info)
         lines.extend(
             [
@@ -273,6 +329,10 @@ def parse_args() -> argparse.Namespace:
         "--runs",
         help="Comma-separated run names. Defaults to the built-in retail 0-19 local runs.",
     )
+    parser.add_argument(
+        "--task-ids",
+        help="Optional comma-separated task IDs to export from each selected run.",
+    )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     return parser.parse_args()
 
@@ -289,8 +349,11 @@ def main() -> None:
         }
     else:
         runs = RUNS
+    selected_task_ids = None
+    if args.task_ids:
+        selected_task_ids = {task_id.strip() for task_id in args.task_ids.split(",") if task_id.strip()}
     for label, run_name in runs.items():
-        path = export_run(label, run_name, output_dir)
+        path = export_run(label, run_name, output_dir, selected_task_ids)
         print(f"wrote {path}")
 
 
