@@ -65,7 +65,11 @@ class OpenAIChatClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        self._add_chat_template_kwargs(payload)
         raw = self._post_chat(payload)
+        if raw.get("_request_error") and "chat_template_kwargs" in str(raw.get("raw_response")):
+            payload.pop("chat_template_kwargs", None)
+            raw = self._post_chat(payload)
         return str(raw.get("content") or raw.get("raw_response") or "")
 
     def chat_json(
@@ -81,9 +85,13 @@ class OpenAIChatClient:
             "max_tokens": max_tokens,
             "response_format": {"type": "json_object"},
         }
+        self._add_chat_template_kwargs(payload)
         raw = self._post_chat(payload)
         if raw.get("_request_error") and "response_format" in str(raw.get("raw_response")):
             payload.pop("response_format", None)
+            raw = self._post_chat(payload)
+        if raw.get("_request_error") and "chat_template_kwargs" in str(raw.get("raw_response")):
+            payload.pop("chat_template_kwargs", None)
             raw = self._post_chat(payload)
         if raw.get("_request_error"):
             return raw
@@ -92,6 +100,10 @@ class OpenAIChatClient:
             return {"_parse_error": True, "raw_response": raw.get("content", "")}
         parsed["raw_response"] = raw.get("content", "")
         return parsed
+
+    def _add_chat_template_kwargs(self, payload: dict[str, Any]) -> None:
+        if "qwen3" in self.model.lower():
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
 
     def _post_chat(self, payload: dict[str, Any]) -> dict[str, Any]:
         url = self.base_url + "/chat/completions"

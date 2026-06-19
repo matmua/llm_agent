@@ -67,6 +67,28 @@ class LLMStateProposer:
             {"role": "user", "content": json.dumps(payload, ensure_ascii=True)},
         ]
         try:
+            if hasattr(self.client, "chat_json"):
+                parsed_response = self.client.chat_json(messages, temperature=0.0, max_tokens=1200)
+                response = str(parsed_response.get("raw_response") or "")
+                if parsed_response.get("_request_error"):
+                    return LLMStateProposalResult(
+                        raw_response=response,
+                        request_error=str(parsed_response.get("raw_response") or "request_error"),
+                        metadata={"step_id": step_id},
+                    )
+                if parsed_response.get("_parse_error"):
+                    return LLMStateProposalResult(
+                        raw_response=response,
+                        parse_error="failed_to_parse_json_object",
+                        metadata={"step_id": step_id},
+                    )
+                parsed = dict(parsed_response)
+                parsed.pop("raw_response", None)
+                return LLMStateProposalResult(
+                    raw_response=response,
+                    parsed=_ensure_top_level(parsed),
+                    metadata={"step_id": step_id},
+                )
             response = self.client.chat(messages, temperature=0.0, max_tokens=1200)
         except Exception as exc:  # pragma: no cover - client-specific failure
             return LLMStateProposalResult(request_error=str(exc), metadata={"step_id": step_id})

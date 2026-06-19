@@ -1,0 +1,1331 @@
+{
+  "setting": {
+    "default_max_steps": 15,
+    "runner_default_confirmed_in": "runners/run_webshop_shadow.py",
+    "note": "No new full max15 run was executed after the user clarified the request. The available 20-task Qwen sample is the existing mixed run: tasks 0-13 max15, tasks 14-19 max8. Future/nominal setting is max_steps=15."
+  },
+  "previous_mock_3step": {
+    "log_dir": "logs/webshop_shadow_clean_20",
+    "episodes": 20,
+    "steps": 60,
+    "success_count": 13,
+    "success_rate": 0.65,
+    "avg_reward": 0.2662409812409812,
+    "avg_steps": 3,
+    "reward_distribution": {
+      "zero_reward": 7,
+      "low_partial_0_to_0_3": 6,
+      "mid_partial_0_3_to_0_8": 6,
+      "high_0_8_to_1": 0,
+      "perfect_1": 1
+    },
+    "per_task": [
+      {
+        "task_id": 0,
+        "success": false,
+        "reward": 0.0,
+        "steps": 3
+      },
+      {
+        "task_id": 1,
+        "success": true,
+        "reward": 0.7142857142857143,
+        "steps": 3
+      },
+      {
+        "task_id": 2,
+        "success": true,
+        "reward": 0.6666666666666666,
+        "steps": 3
+      },
+      {
+        "task_id": 3,
+        "success": true,
+        "reward": 1.0,
+        "steps": 3
+      },
+      {
+        "task_id": 4,
+        "success": true,
+        "reward": 0.022222222222222223,
+        "steps": 3
+      },
+      {
+        "task_id": 5,
+        "success": true,
+        "reward": 0.2857142857142857,
+        "steps": 3
+      },
+      {
+        "task_id": 6,
+        "success": true,
+        "reward": 0.5714285714285714,
+        "steps": 3
+      },
+      {
+        "task_id": 7,
+        "success": true,
+        "reward": 0.03333333333333333,
+        "steps": 3
+      },
+      {
+        "task_id": 8,
+        "success": true,
+        "reward": 0.045454545454545456,
+        "steps": 3
+      },
+      {
+        "task_id": 9,
+        "success": true,
+        "reward": 0.2857142857142857,
+        "steps": 3
+      },
+      {
+        "task_id": 10,
+        "success": true,
+        "reward": 0.6,
+        "steps": 3
+      },
+      {
+        "task_id": 11,
+        "success": true,
+        "reward": 0.6,
+        "steps": 3
+      },
+      {
+        "task_id": 12,
+        "success": true,
+        "reward": 0.16666666666666666,
+        "steps": 3
+      },
+      {
+        "task_id": 13,
+        "success": false,
+        "reward": 0.0,
+        "steps": 3
+      },
+      {
+        "task_id": 14,
+        "success": true,
+        "reward": 0.3333333333333333,
+        "steps": 3
+      },
+      {
+        "task_id": 15,
+        "success": false,
+        "reward": 0.0,
+        "steps": 3
+      },
+      {
+        "task_id": 16,
+        "success": false,
+        "reward": 0.0,
+        "steps": 3
+      },
+      {
+        "task_id": 17,
+        "success": false,
+        "reward": 0.0,
+        "steps": 3
+      },
+      {
+        "task_id": 18,
+        "success": false,
+        "reward": 0.0,
+        "steps": 3
+      },
+      {
+        "task_id": 19,
+        "success": false,
+        "reward": 0.0,
+        "steps": 3
+      }
+    ]
+  },
+  "current_qwen_available_20": {
+    "log_dir": "logs/webshop_shadow_llm_qwen20_mixed_max8_resume",
+    "episodes": 20,
+    "steps": 188,
+    "success_count": 13,
+    "success_rate": 0.65,
+    "avg_reward": 0.36145021645021647,
+    "avg_steps": 9.4,
+    "reward_distribution": {
+      "zero_reward": 7,
+      "low_partial_0_to_0_3": 3,
+      "mid_partial_0_3_to_0_8": 7,
+      "high_0_8_to_1": 0,
+      "perfect_1": 3
+    },
+    "per_task": [
+      {
+        "task_id": 0,
+        "success": false,
+        "reward": 0.0,
+        "steps": 15
+      },
+      {
+        "task_id": 1,
+        "success": true,
+        "reward": 0.42857142857142855,
+        "steps": 3
+      },
+      {
+        "task_id": 2,
+        "success": true,
+        "reward": 0.6666666666666666,
+        "steps": 13
+      },
+      {
+        "task_id": 3,
+        "success": true,
+        "reward": 1.0,
+        "steps": 13
+      },
+      {
+        "task_id": 4,
+        "success": true,
+        "reward": 1.0,
+        "steps": 15
+      },
+      {
+        "task_id": 5,
+        "success": false,
+        "reward": 0.0,
+        "steps": 15
+      },
+      {
+        "task_id": 6,
+        "success": true,
+        "reward": 0.5714285714285714,
+        "steps": 8
+      },
+      {
+        "task_id": 7,
+        "success": true,
+        "reward": 0.6666666666666666,
+        "steps": 9
+      },
+      {
+        "task_id": 8,
+        "success": true,
+        "reward": 0.09090909090909091,
+        "steps": 5
+      },
+      {
+        "task_id": 9,
+        "success": true,
+        "reward": 0.42857142857142855,
+        "steps": 15
+      },
+      {
+        "task_id": 10,
+        "success": true,
+        "reward": 0.6,
+        "steps": 3
+      },
+      {
+        "task_id": 11,
+        "success": true,
+        "reward": 0.6,
+        "steps": 3
+      },
+      {
+        "task_id": 12,
+        "success": true,
+        "reward": 0.03333333333333333,
+        "steps": 11
+      },
+      {
+        "task_id": 13,
+        "success": false,
+        "reward": 0.0,
+        "steps": 15
+      },
+      {
+        "task_id": 14,
+        "success": false,
+        "reward": 0.0,
+        "steps": 8
+      },
+      {
+        "task_id": 15,
+        "success": false,
+        "reward": 0.0,
+        "steps": 8
+      },
+      {
+        "task_id": 16,
+        "success": false,
+        "reward": 0.0,
+        "steps": 8
+      },
+      {
+        "task_id": 17,
+        "success": true,
+        "reward": 0.14285714285714285,
+        "steps": 7
+      },
+      {
+        "task_id": 18,
+        "success": false,
+        "reward": 0.0,
+        "steps": 8
+      },
+      {
+        "task_id": 19,
+        "success": true,
+        "reward": 1.0,
+        "steps": 6
+      }
+    ]
+  },
+  "step_level_current_qwen": {
+    "total_steps": 188,
+    "pre_any_steps": 44,
+    "pre_high_steps": 10,
+    "post_error_steps": 104,
+    "pre_categories": {
+      "missing_evidence": 34,
+      "invalid_action": 10,
+      "insufficient_evidence": 1
+    },
+    "post_error_categories": {
+      "unexpected_transition": 67,
+      "no_effect": 47,
+      "action_no_effect": 47
+    }
+  },
+  "confusion_current_qwen": {
+    "actual_zero_reward_failure": {
+      "pre_any_warning": {
+        "TP": 7,
+        "FP": 13,
+        "TN": 0,
+        "FN": 0,
+        "precision": 0.35,
+        "recall": 1.0,
+        "false_positive_rate": 1.0,
+        "rows": [
+          {
+            "task_id": 0,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 15
+          },
+          {
+            "task_id": 1,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.42857142857142855,
+            "steps": 3
+          },
+          {
+            "task_id": 2,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.6666666666666666,
+            "steps": 13
+          },
+          {
+            "task_id": 3,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 1.0,
+            "steps": 13
+          },
+          {
+            "task_id": 4,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 1.0,
+            "steps": 15
+          },
+          {
+            "task_id": 5,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 15
+          },
+          {
+            "task_id": 6,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.5714285714285714,
+            "steps": 8
+          },
+          {
+            "task_id": 7,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.6666666666666666,
+            "steps": 9
+          },
+          {
+            "task_id": 8,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.09090909090909091,
+            "steps": 5
+          },
+          {
+            "task_id": 9,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.42857142857142855,
+            "steps": 15
+          },
+          {
+            "task_id": 10,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.6,
+            "steps": 3
+          },
+          {
+            "task_id": 11,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.6,
+            "steps": 3
+          },
+          {
+            "task_id": 12,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.03333333333333333,
+            "steps": 11
+          },
+          {
+            "task_id": 13,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 15
+          },
+          {
+            "task_id": 14,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 15,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 16,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 17,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.14285714285714285,
+            "steps": 7
+          },
+          {
+            "task_id": 18,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 19,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 1.0,
+            "steps": 6
+          }
+        ]
+      },
+      "pre_high_only": {
+        "TP": 2,
+        "FP": 5,
+        "TN": 8,
+        "FN": 5,
+        "precision": 0.2857142857142857,
+        "recall": 0.2857142857142857,
+        "false_positive_rate": 0.38461538461538464,
+        "rows": [
+          {
+            "task_id": 0,
+            "label": "FN",
+            "predicted": false,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 15
+          },
+          {
+            "task_id": 1,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.42857142857142855,
+            "steps": 3
+          },
+          {
+            "task_id": 2,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.6666666666666666,
+            "steps": 13
+          },
+          {
+            "task_id": 3,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 1.0,
+            "steps": 13
+          },
+          {
+            "task_id": 4,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 1.0,
+            "steps": 15
+          },
+          {
+            "task_id": 5,
+            "label": "FN",
+            "predicted": false,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 15
+          },
+          {
+            "task_id": 6,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.5714285714285714,
+            "steps": 8
+          },
+          {
+            "task_id": 7,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.6666666666666666,
+            "steps": 9
+          },
+          {
+            "task_id": 8,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.09090909090909091,
+            "steps": 5
+          },
+          {
+            "task_id": 9,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.42857142857142855,
+            "steps": 15
+          },
+          {
+            "task_id": 10,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.6,
+            "steps": 3
+          },
+          {
+            "task_id": 11,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.6,
+            "steps": 3
+          },
+          {
+            "task_id": 12,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.03333333333333333,
+            "steps": 11
+          },
+          {
+            "task_id": 13,
+            "label": "FN",
+            "predicted": false,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 15
+          },
+          {
+            "task_id": 14,
+            "label": "FN",
+            "predicted": false,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 15,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 16,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 17,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.14285714285714285,
+            "steps": 7
+          },
+          {
+            "task_id": 18,
+            "label": "FN",
+            "predicted": false,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 19,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 1.0,
+            "steps": 6
+          }
+        ]
+      },
+      "post_error": {
+        "TP": 7,
+        "FP": 10,
+        "TN": 3,
+        "FN": 0,
+        "precision": 0.4117647058823529,
+        "recall": 1.0,
+        "false_positive_rate": 0.7692307692307693,
+        "rows": [
+          {
+            "task_id": 0,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 15
+          },
+          {
+            "task_id": 1,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.42857142857142855,
+            "steps": 3
+          },
+          {
+            "task_id": 2,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.6666666666666666,
+            "steps": 13
+          },
+          {
+            "task_id": 3,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 1.0,
+            "steps": 13
+          },
+          {
+            "task_id": 4,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 1.0,
+            "steps": 15
+          },
+          {
+            "task_id": 5,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 15
+          },
+          {
+            "task_id": 6,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.5714285714285714,
+            "steps": 8
+          },
+          {
+            "task_id": 7,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.6666666666666666,
+            "steps": 9
+          },
+          {
+            "task_id": 8,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.09090909090909091,
+            "steps": 5
+          },
+          {
+            "task_id": 9,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.42857142857142855,
+            "steps": 15
+          },
+          {
+            "task_id": 10,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.6,
+            "steps": 3
+          },
+          {
+            "task_id": 11,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.6,
+            "steps": 3
+          },
+          {
+            "task_id": 12,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.03333333333333333,
+            "steps": 11
+          },
+          {
+            "task_id": 13,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 15
+          },
+          {
+            "task_id": 14,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 15,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 16,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 17,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.14285714285714285,
+            "steps": 7
+          },
+          {
+            "task_id": 18,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 19,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 1.0,
+            "steps": 6
+          }
+        ]
+      }
+    },
+    "actual_reward_lt_0_3_quality_failure": {
+      "pre_any_warning": {
+        "TP": 10,
+        "FP": 10,
+        "TN": 0,
+        "FN": 0,
+        "precision": 0.5,
+        "recall": 1.0,
+        "false_positive_rate": 1.0,
+        "rows": [
+          {
+            "task_id": 0,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 15
+          },
+          {
+            "task_id": 1,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.42857142857142855,
+            "steps": 3
+          },
+          {
+            "task_id": 2,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.6666666666666666,
+            "steps": 13
+          },
+          {
+            "task_id": 3,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 1.0,
+            "steps": 13
+          },
+          {
+            "task_id": 4,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 1.0,
+            "steps": 15
+          },
+          {
+            "task_id": 5,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 15
+          },
+          {
+            "task_id": 6,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.5714285714285714,
+            "steps": 8
+          },
+          {
+            "task_id": 7,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.6666666666666666,
+            "steps": 9
+          },
+          {
+            "task_id": 8,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.09090909090909091,
+            "steps": 5
+          },
+          {
+            "task_id": 9,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.42857142857142855,
+            "steps": 15
+          },
+          {
+            "task_id": 10,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.6,
+            "steps": 3
+          },
+          {
+            "task_id": 11,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.6,
+            "steps": 3
+          },
+          {
+            "task_id": 12,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.03333333333333333,
+            "steps": 11
+          },
+          {
+            "task_id": 13,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 15
+          },
+          {
+            "task_id": 14,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 15,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 16,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 17,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.14285714285714285,
+            "steps": 7
+          },
+          {
+            "task_id": 18,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 19,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 1.0,
+            "steps": 6
+          }
+        ]
+      },
+      "pre_high_only": {
+        "TP": 3,
+        "FP": 4,
+        "TN": 6,
+        "FN": 7,
+        "precision": 0.42857142857142855,
+        "recall": 0.3,
+        "false_positive_rate": 0.4,
+        "rows": [
+          {
+            "task_id": 0,
+            "label": "FN",
+            "predicted": false,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 15
+          },
+          {
+            "task_id": 1,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.42857142857142855,
+            "steps": 3
+          },
+          {
+            "task_id": 2,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.6666666666666666,
+            "steps": 13
+          },
+          {
+            "task_id": 3,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 1.0,
+            "steps": 13
+          },
+          {
+            "task_id": 4,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 1.0,
+            "steps": 15
+          },
+          {
+            "task_id": 5,
+            "label": "FN",
+            "predicted": false,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 15
+          },
+          {
+            "task_id": 6,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.5714285714285714,
+            "steps": 8
+          },
+          {
+            "task_id": 7,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.6666666666666666,
+            "steps": 9
+          },
+          {
+            "task_id": 8,
+            "label": "FN",
+            "predicted": false,
+            "actual": true,
+            "reward": 0.09090909090909091,
+            "steps": 5
+          },
+          {
+            "task_id": 9,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.42857142857142855,
+            "steps": 15
+          },
+          {
+            "task_id": 10,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.6,
+            "steps": 3
+          },
+          {
+            "task_id": 11,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.6,
+            "steps": 3
+          },
+          {
+            "task_id": 12,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.03333333333333333,
+            "steps": 11
+          },
+          {
+            "task_id": 13,
+            "label": "FN",
+            "predicted": false,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 15
+          },
+          {
+            "task_id": 14,
+            "label": "FN",
+            "predicted": false,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 15,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 16,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 17,
+            "label": "FN",
+            "predicted": false,
+            "actual": true,
+            "reward": 0.14285714285714285,
+            "steps": 7
+          },
+          {
+            "task_id": 18,
+            "label": "FN",
+            "predicted": false,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 19,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 1.0,
+            "steps": 6
+          }
+        ]
+      },
+      "post_error": {
+        "TP": 10,
+        "FP": 7,
+        "TN": 3,
+        "FN": 0,
+        "precision": 0.5882352941176471,
+        "recall": 1.0,
+        "false_positive_rate": 0.7,
+        "rows": [
+          {
+            "task_id": 0,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 15
+          },
+          {
+            "task_id": 1,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.42857142857142855,
+            "steps": 3
+          },
+          {
+            "task_id": 2,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.6666666666666666,
+            "steps": 13
+          },
+          {
+            "task_id": 3,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 1.0,
+            "steps": 13
+          },
+          {
+            "task_id": 4,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 1.0,
+            "steps": 15
+          },
+          {
+            "task_id": 5,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 15
+          },
+          {
+            "task_id": 6,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.5714285714285714,
+            "steps": 8
+          },
+          {
+            "task_id": 7,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.6666666666666666,
+            "steps": 9
+          },
+          {
+            "task_id": 8,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.09090909090909091,
+            "steps": 5
+          },
+          {
+            "task_id": 9,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 0.42857142857142855,
+            "steps": 15
+          },
+          {
+            "task_id": 10,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.6,
+            "steps": 3
+          },
+          {
+            "task_id": 11,
+            "label": "TN",
+            "predicted": false,
+            "actual": false,
+            "reward": 0.6,
+            "steps": 3
+          },
+          {
+            "task_id": 12,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.03333333333333333,
+            "steps": 11
+          },
+          {
+            "task_id": 13,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 15
+          },
+          {
+            "task_id": 14,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 15,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 16,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 17,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.14285714285714285,
+            "steps": 7
+          },
+          {
+            "task_id": 18,
+            "label": "TP",
+            "predicted": true,
+            "actual": true,
+            "reward": 0.0,
+            "steps": 8
+          },
+          {
+            "task_id": 19,
+            "label": "FP",
+            "predicted": true,
+            "actual": false,
+            "reward": 1.0,
+            "steps": 6
+          }
+        ]
+      }
+    }
+  }
+}

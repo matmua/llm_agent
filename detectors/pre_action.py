@@ -81,11 +81,11 @@ class PreActionDetector:
                 rule_checks["search_bar_available"] = False
             if not parsed.target.strip():
                 categories.append("invalid_action")
-            product_type = state_manager.graph.task_requirement.get("product_type")
-            if product_type is None or not product_type.value:
+            product_type_value = state_manager.requirement_value("product_type")
+            if not product_type_value:
                 missing.append("product_type")
                 categories.append("missing_evidence")
-            if product_type and product_type.value and not _has_overlap(parsed.target, str(product_type.value)):
+            if product_type_value and not _has_overlap(parsed.target, str(product_type_value)):
                 unsupported.append("search_query_not_grounded_in_product_type")
                 categories.append("unsupported_inference")
         elif parsed.action_type == "click":

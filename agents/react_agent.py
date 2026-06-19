@@ -33,14 +33,15 @@ class WebShopReactAgent:
                 {
                     "role": "system",
                     "content": (
-                        "You are a WebShop ReAct agent. Return exactly one next action. "
-                        "Valid actions are search[keywords] and click[value]."
+                        "You are a WebShop action generator. Return exactly one next action line "
+                        "and nothing else. Valid actions are search[keywords] and click[value]. "
+                        "Do not include thoughts, explanations, markdown, or quotes around the action."
                     ),
                 },
                 {"role": "user", "content": prompt},
             ],
             temperature=0.0,
-            max_tokens=256,
+            max_tokens=96,
         )
         action = parse_action_from_response(response)
         self.last_trace = {
@@ -74,9 +75,8 @@ class WebShopReactAgent:
             f"clickables: {clickables}\n"
             f"{state_block}"
             f"Recent action history:\n{recent_history}\n\n"
-            "Think briefly, then output one line in this exact form:\n"
+            "Output exactly one line in one of these forms:\n"
             "Action: search[keywords]\n"
-            "or\n"
             "Action: click[value]"
         )
 

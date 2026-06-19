@@ -15,6 +15,8 @@ logs/
 reports/*
 !reports/demo_shadow/
 !reports/demo_shadow/**
+!reports/webshop_qwen_shadow_analysis/
+!reports/webshop_qwen_shadow_analysis/**
 __pycache__/
 **/__pycache__/
 .pytest_cache/

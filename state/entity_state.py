@@ -132,6 +132,7 @@ class StateManager:
         self.domain_adapter = domain_adapter or WebShopAdapter()
         self.normalizer = StateNormalizer()
         self.last_update_metadata: dict[str, Any] = {}
+        self.use_legacy_rules = state_builder != "llm"
 
     def reset(
         self,
@@ -143,7 +144,8 @@ class StateManager:
         self.graph = EntityAttributeStateGraph()
         self.generic_graph = StateGraph()
         self.instruction = instruction
-        self._update_task_requirements(instruction, step_id)
+        if self.use_legacy_rules:
+            self._update_task_requirements(instruction, step_id)
         self.update_observation(observation, available_actions, step_id)
 
     def update_observation(
@@ -170,10 +172,11 @@ class StateManager:
             if current
             else None,
         )
-        for product_name in visible:
-            self._upsert_candidate(product_name, observation, step_id)
-        if current:
-            self._upsert_candidate(current, observation, step_id)
+        if self.use_legacy_rules:
+            for product_name in visible:
+                self._upsert_candidate(product_name, observation, step_id)
+            if current:
+                self._upsert_candidate(current, observation, step_id)
         self._record_history("observation", step_id)
         self._update_generic_state(observation, available_actions, step_id)
         self.last_update_metadata["legacy_state_events_added"] = len(self.graph.state_history) - legacy_before
@@ -241,7 +244,10 @@ class StateManager:
         last_action = self.graph.action_state.last_action if self.graph.action_state else ""
         llm_raw = ""
         llm_parse_error = ""
-        fallback_used = False
+        llm_parse_failed = False
+        state_fallback_used = False
+        rule_adapter_used = False
+        empty_proposal_used = False
         normalized_errors: list[str] = []
         merge_delta: dict[str, Any] = {}
 
@@ -260,17 +266,22 @@ class StateManager:
             if result.ok and result.parsed is not None:
                 proposal = result.parsed
             else:
-                fallback_used = True
+                llm_parse_failed = True
 
         if proposal is None:
-            proposal = self.domain_adapter.build_proposal(
-                task_instruction=self.instruction,
-                observation=observation,
-                available_actions=available_actions,
-                step_id=step_id,
-                last_action=last_action,
-            )
-            fallback_used = fallback_used or self.state_builder in {"llm", "llm_hybrid"}
+            if self.state_builder == "llm":
+                proposal = _empty_proposal()
+                empty_proposal_used = True
+            else:
+                proposal = self.domain_adapter.build_proposal(
+                    task_instruction=self.instruction,
+                    observation=observation,
+                    available_actions=available_actions,
+                    step_id=step_id,
+                    last_action=last_action,
+                )
+                rule_adapter_used = True
+                state_fallback_used = self.state_builder == "llm_hybrid" and llm_parse_failed
         elif self.state_builder == "llm_hybrid":
             adapter_proposal = self.domain_adapter.build_proposal(
                 task_instruction=self.instruction,
@@ -279,6 +290,7 @@ class StateManager:
                 step_id=step_id,
                 last_action=last_action,
             )
+            rule_adapter_used = True
             proposal = _combine_proposals(proposal, adapter_proposal)
 
         normalized = self.normalizer.normalize(proposal, step_id=step_id)
@@ -291,7 +303,10 @@ class StateManager:
             "use_llm_state": self.use_llm_state,
             "llm_state_proposal_raw": llm_raw,
             "llm_state_proposal_parse_error": llm_parse_error,
-            "state_fallback_used": fallback_used,
+            "llm_state_parse_failed": llm_parse_failed,
+            "state_fallback_used": state_fallback_used,
+            "rule_adapter_used": rule_adapter_used,
+            "empty_proposal_used": empty_proposal_used,
             "normalized_state_delta": merge_delta,
             "normalized_state_errors": normalized_errors,
             "generic_entities": len(self.generic_graph.entities),
@@ -300,6 +315,8 @@ class StateManager:
         }
 
     def missing_hard_constraints_for_current_product(self) -> list[str]:
+        if not self.use_legacy_rules:
+            return self._generic_missing_hard_constraints()
         page = self.graph.page_state
         if page is None or page.current_product_id_or_name is None:
             return self._hard_constraint_names()
@@ -328,6 +345,63 @@ class StateManager:
             elif str(product_attr.value).lower() != str(requirement.value).lower():
                 missing.append(name)
         return missing
+
+    def requirement_value(self, name: str) -> Any:
+        record = self.graph.task_requirement.get(name)
+        if record is not None and record.value not in (None, "", []):
+            return record.value
+        generic_name = name.replace("_constraint", "")
+        for constraint in self.generic_graph.constraints.values():
+            if constraint.attribute_name == generic_name and constraint.expected_value not in (None, "", []):
+                return constraint.expected_value
+            if name == "product_type" and constraint.attribute_name == "product_type":
+                return constraint.expected_value
+        return None
+
+    def _generic_missing_hard_constraints(self) -> list[str]:
+        constraints = [
+            constraint
+            for constraint in self.generic_graph.constraints.values()
+            if constraint.strictness == "hard"
+            and constraint.attribute_name in {"price", "color", "size", "brand", "quantity"}
+        ]
+        if not constraints:
+            return []
+        product = self._generic_current_product()
+        if product is None:
+            return [f"{constraint.attribute_name}_constraint" for constraint in constraints]
+        missing: list[str] = []
+        for constraint in constraints:
+            attr = product.attributes.get(constraint.attribute_name)
+            if attr is None or attr.value in (None, "", []):
+                missing.append(f"{constraint.attribute_name}_constraint")
+                continue
+            if constraint.operator == "less_equal":
+                try:
+                    if float(attr.value) > float(constraint.expected_value):
+                        missing.append(f"{constraint.attribute_name}_constraint")
+                except (TypeError, ValueError):
+                    missing.append(f"{constraint.attribute_name}_constraint")
+            elif constraint.operator in {"equals", "contains"}:
+                if str(constraint.expected_value).lower() not in str(attr.value).lower() and str(
+                    constraint.expected_value
+                ).lower() not in str(attr.evidence_text).lower():
+                    missing.append(f"{constraint.attribute_name}_constraint")
+        return missing
+
+    def _generic_current_product(self):
+        products = [
+            entity
+            for entity in self.generic_graph.entities.values()
+            if entity.entity_type == "product"
+        ]
+        if not products:
+            return None
+        for entity in reversed(products):
+            visible = entity.attributes.get("visible")
+            if visible is None or visible.value is False:
+                return entity
+        return products[-1]
 
     def repair_candidate_slots(self, contaminated_slots: list[str], step_id: int) -> list[str]:
         page = self.graph.page_state

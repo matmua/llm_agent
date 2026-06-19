@@ -176,7 +176,7 @@ def _constraint_findings(
 ) -> dict[str, list[dict[str, Any]]]:
     explicit_conflicts: list[dict[str, Any]] = []
     missing_evidence: list[dict[str, Any]] = []
-    requirements = state_after.get("task_requirement", {}) if isinstance(state_after, dict) else {}
+    requirements = _requirements_from_state(state_after)
     lowered_obs = observation_after.lower()
     price_req = _attr_value(requirements, "price_constraint")
     if price_req is not None:
@@ -235,6 +235,24 @@ def _attr_value(records: dict[str, Any], name: str) -> Any:
     if isinstance(record, dict):
         return record.get("value")
     return None
+
+
+def _requirements_from_state(state_after: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    requirements = dict(state_after.get("task_requirement", {})) if isinstance(state_after, dict) else {}
+    generic = state_after.get("generic_state_graph", {}) if isinstance(state_after, dict) else {}
+    for constraint in generic.get("constraints", {}).values():
+        if not isinstance(constraint, dict) or constraint.get("strictness") != "hard":
+            continue
+        attr = constraint.get("attribute_name")
+        if attr == "price":
+            requirements.setdefault("price_constraint", {"value": constraint.get("expected_value")})
+        elif attr == "color":
+            requirements.setdefault("color_constraint", {"value": constraint.get("expected_value")})
+        elif attr == "size":
+            requirements.setdefault("size_constraint", {"value": constraint.get("expected_value")})
+        elif attr == "brand":
+            requirements.setdefault("brand_constraint", {"value": constraint.get("expected_value")})
+    return requirements
 
 
 def _unsupported_state_updates(state_after: dict[str, Any]) -> list[str]:

@@ -145,6 +145,14 @@ Generate a shadow report:
   --report_dir reports/demo_shadow
 ```
 
+### Current WebShop Notes
+
+The current Qwen3-8B shadow analysis is tracked in
+`reports/webshop_qwen_shadow_analysis/summary_zh.md`. It compares the earlier
+3-step mock baseline with the Qwen3-8B run, reports reward distribution, and
+breaks down pre/post detector TP/FP/FN/TN counts. The runner default remains
+`--max_steps 15`.
+
 Current WebShop reports:
 
 - `reports/demo_shadow/webshop_shadow_summary.md`
