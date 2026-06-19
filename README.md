@@ -2,6 +2,149 @@
 
 ## Current Goal
 
+Current stage: WebShop Phase 1 shadow detection. The repo now includes a
+ReAct-style WebShop runner with structured entity-attribute state, pre-action
+shadow detection, post-action delta verification, and JSONL trajectory logs.
+
+The earlier tau3/tau-bench work is still retained below for reference.
+
+## WebShop Phase 1 Shadow Mode
+
+Phase 1 is detection only. The detector can log high-risk actions, missing
+attributes, hypothetical blocks, hypothetical completion actions, and repair
+plans, but it never changes execution. The runner asserts:
+
+```text
+executed_action == raw_action
+```
+
+Main modules:
+
+- `agents/react_agent.py`: WebShop ReAct agent.
+- `agents/llm_client.py`: OpenAI-compatible client and deterministic mock client.
+- `state/entity_state.py`: structured entity-attribute task state.
+- `detectors/pre_action.py`: action format, provenance, missing precondition, premature buy, and optional LLM judge checks.
+- `detectors/post_action.py`: no-effect, transition, constraint conflict, unsupported update, and preventable failure checks.
+- `policies/shadow_policy.py`: no-op shadow intervention interface.
+- `runners/run_webshop_shadow.py`: official/mock WebShop runner.
+- `analysis/analyze_shadow_logs.py`: metrics, case extraction, and Markdown report generation.
+
+### WebShop Environment
+
+The official WebShop source is cloned under `external/webshop` and is ignored by
+git. The text environment is old and works best in a separate Python 3.8 env.
+The current server has a working `webshop` conda env prepared for the text
+runner.
+
+Recreate the text-env dependencies:
+
+```bash
+./no_proxy_run.sh bash -lc '
+  conda create -y -n webshop python=3.8.13
+  TMPDIR=/root/autodl-tmp/pip_tmp \
+  PIP_CACHE_DIR=/root/autodl-tmp/pip_cache \
+  /root/miniconda3/envs/webshop/bin/python -m pip install \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    --trusted-host pypi.tuna.tsinghua.edu.cn \
+    -r requirements-webshop-textenv.txt
+  source /etc/network_turbo 2>/dev/null || true
+  PATH=/root/miniconda3/envs/webshop/bin:$PATH \
+    /root/miniconda3/envs/webshop/bin/python -m spacy download en_core_web_sm
+  conda install -y -n webshop -c conda-forge openjdk=11 faiss-cpu
+'
+```
+
+Small WebShop data was downloaded from a Hugging Face mirror because Google
+Drive `gdown` stalled from the server:
+
+```bash
+./no_proxy_run.sh bash -lc '
+  source /etc/network_turbo 2>/dev/null || true
+  mkdir -p external/webshop/data
+  cd external/webshop/data
+  curl -L --fail -o items_shuffle_1000.json \
+    https://huggingface.co/datasets/HongbangYuan/webshop/resolve/main/items_shuffle_1000.json
+  curl -L --fail -o items_ins_v2_1000.json \
+    https://huggingface.co/datasets/HongbangYuan/webshop/resolve/main/items_ins_v2_1000.json
+  curl -L --fail -o items_human_ins.json \
+    https://huggingface.co/datasets/HongbangYuan/webshop/resolve/main/items_human_ins.json
+'
+```
+
+Build the search index:
+
+```bash
+./no_proxy_run.sh bash -lc '
+  cd external/webshop/search_engine
+  mkdir -p resources resources_100 resources_1k resources_100k indexes
+  export PATH=/root/miniconda3/envs/webshop/bin:$PATH
+  export JAVA_HOME=/root/miniconda3/envs/webshop
+  export JVM_PATH=/root/miniconda3/envs/webshop/lib/jvm/lib/server/libjvm.so
+  export PYTHONPATH=..
+  /root/miniconda3/envs/webshop/bin/python convert_product_file_format.py
+  bash run_indexing.sh
+'
+```
+
+### Run WebShop Shadow
+
+Mock smoke run, no official dependencies:
+
+```bash
+./no_proxy_run.sh python -m runners.run_webshop_shadow \
+  --env mock \
+  --num_tasks 20 \
+  --start_index 0 \
+  --max_steps 8 \
+  --model mock \
+  --log_dir logs/webshop_shadow \
+  --shadow true
+```
+
+Official WebShop small run:
+
+```bash
+./no_proxy_run.sh bash -lc '
+  export PATH=/root/miniconda3/envs/webshop/bin:$PATH
+  export JAVA_HOME=/root/miniconda3/envs/webshop
+  export JVM_PATH=/root/miniconda3/envs/webshop/lib/jvm/lib/server/libjvm.so
+  /root/miniconda3/envs/webshop/bin/python -m runners.run_webshop_shadow \
+    --env official \
+    --num_tasks 20 \
+    --start_index 0 \
+    --max_steps 8 \
+    --model mock \
+    --log_dir logs/webshop_shadow_official_small \
+    --shadow true
+'
+```
+
+Use a real OpenAI-compatible model by setting `LLM_MODEL`, `LLM_BASE_URL`, and
+`LLM_API_KEY`, then pass `--model "$LLM_MODEL"`.
+
+Generate reports:
+
+```bash
+./no_proxy_run.sh python -m analysis.analyze_shadow_logs \
+  --log_dir logs/webshop_shadow_official_small \
+  --report_dir reports/webshop_official_small
+```
+
+Current WebShop reports:
+
+- `reports/webshop_official_small/webshop_shadow_summary.md`
+- `reports/webshop_official_small/webshop_shadow_metrics.json`
+- `reports/webshop_official_small/webshop_shadow_cases.jsonl`
+- `reports/webshop_shadow_summary.md` for the mock smoke run.
+
+Current official small smoke result: 20 episodes, 60 steps, 13/20 success with
+the deterministic mock agent. This is not a model-quality result; it verifies
+that the official WebShop loop, state tracking, shadow detection, logs, and
+analysis run end to end.
+
+All runtime commands should be launched through `./no_proxy_run.sh` so project
+traffic uses the server network instead of inherited local proxy variables.
+
 This repo evaluates Qwen3-8B on tau-bench / tau3-bench and implements a
 zero-training, dataset-agnostic outcome predictor for action-level risk warning.
 
