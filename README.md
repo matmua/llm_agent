@@ -153,6 +153,11 @@ The current Qwen3-8B shadow analysis is tracked in
 breaks down pre/post detector TP/FP/FN/TN counts. The runner default remains
 `--max_steps 15`.
 
+Raw logs for that analysis are tracked in:
+
+- `logs/webshop_shadow_clean_20/`
+- `logs/webshop_shadow_llm_qwen20_mixed_max8_resume/`
+
 Current WebShop reports:
 
 - `reports/demo_shadow/webshop_shadow_summary.md`

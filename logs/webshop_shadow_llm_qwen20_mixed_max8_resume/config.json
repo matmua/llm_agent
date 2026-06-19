@@ -1,0 +1,21 @@
+{
+  "run_id": "mixed_webshop_shadow_llm_qwen20_resume14_max8",
+  "env": "OfficialWebShopEnv",
+  "requested_env": "official",
+  "model": "qwen3-8b",
+  "num_tasks": 20,
+  "start_index": 0,
+  "max_steps": "tasks_0_13=15; tasks_14_19=8",
+  "mode": "shadow",
+  "shadow": true,
+  "intervention_enabled": false,
+  "use_llm_judge": false,
+  "use_llm_state": true,
+  "state_builder": "llm",
+  "state_to_agent": false,
+  "resume_note": "Original run stopped after completed task 13. Tasks 14-19 rerun from task 14 with max_steps=8 per user request.",
+  "source_log_dirs": [
+    "logs/webshop_shadow_llm_qwen20",
+    "logs/webshop_shadow_llm_qwen20_resume14_max8"
+  ]
+}
