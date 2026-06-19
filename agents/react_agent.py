@@ -11,6 +11,7 @@ from agents.llm_client import LLMClient
 class WebShopReactAgent:
     def __init__(self, client: LLMClient):
         self.client = client
+        self.last_trace: dict[str, Any] = {}
 
     def act(
         self,
@@ -41,7 +42,16 @@ class WebShopReactAgent:
             temperature=0.0,
             max_tokens=256,
         )
-        return parse_action_from_response(response)
+        action = parse_action_from_response(response)
+        self.last_trace = {
+            "prompt_chars": len(prompt),
+            "response_chars": len(response),
+            "estimated_prompt_tokens": estimate_tokens(prompt),
+            "estimated_response_tokens": estimate_tokens(response),
+            "estimated_total_tokens": estimate_tokens(prompt) + estimate_tokens(response),
+            "raw_response": response[:2000],
+        }
+        return action
 
     @staticmethod
     def _build_prompt(
@@ -78,3 +88,6 @@ def parse_action_from_response(response: str) -> str:
             return match.group(1).strip()
     return response.strip().splitlines()[-1].strip() if response.strip() else ""
 
+
+def estimate_tokens(text: str) -> int:
+    return max(1, (len(text or "") + 3) // 4)

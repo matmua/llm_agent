@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import os
+import random
 import sys
 from dataclasses import dataclass
 from typing import Any
@@ -40,12 +41,15 @@ class OfficialWebShopEnv(WebShopEnvProtocol):
         _configure_conda_java()
         try:
             import gym  # type: ignore
+            import numpy as np  # type: ignore
             import web_agent_site.envs  # noqa: F401
         except Exception as exc:  # pragma: no cover - depends on optional deps
             raise RuntimeError(
                 "Official WebShop dependencies are not installed. "
                 "Run external/webshop/setup.sh in a compatible Python 3.8 env."
             ) from exc
+        random.seed(233)
+        np.random.seed(233)
         self._env = gym.make(
             "WebAgentTextEnv-v0",
             observation_mode="text",

@@ -1,4 +1,4 @@
-"""Run WebShop shadow-mode agent episodes."""
+"""Run WebShop direct, shadow, or intervention-mode agent episodes."""
 
 from __future__ import annotations
 
@@ -11,11 +11,16 @@ from typing import Any
 
 from agents.llm_client import MockLLMClient, OpenAIChatClient
 from agents.react_agent import WebShopReactAgent
+from detectors.action_parser import parse_webshop_action
 from detectors.post_action import PostActionDeltaVerifier
-from detectors.pre_action import PreActionDetector
-from policies.shadow_policy import ShadowInterventionPolicy
+from detectors.pre_action import PreActionDetector, PreActionReport
+from policies.risk_router import RiskAwareActionRouter
+from policies.shadow_policy import InterventionDecision, ShadowInterventionPolicy
+from repair.checkpoint_manager import CheckpointManager
+from repair.minimal_state_repair import MinimalStateRepair
+from runners.intervention_logger import InterventionLogger
 from runners.webshop_env import make_webshop_env
-from state.entity_state import StateManager
+from state.entity_state import StateManager, expected_delta_for_action
 
 
 def main() -> None:
@@ -31,6 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default=os.getenv("LLM_MODEL") or os.getenv("QWEN_MODEL") or "mock")
     parser.add_argument("--log_dir", default="logs/webshop_shadow")
     parser.add_argument("--shadow", default="true")
+    parser.add_argument("--mode", choices=["direct", "shadow", "intervention"], default=None)
     parser.add_argument("--env", choices=["auto", "official", "mock"], default="auto")
     parser.add_argument("--webshop_repo", default="external/webshop")
     parser.add_argument("--num_products", type=int, default=1000)
@@ -39,12 +45,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def run_webshop_shadow(args: argparse.Namespace) -> dict[str, Any]:
-    if str(args.shadow).lower() != "true":
-        raise ValueError("Only shadow=true is supported in Phase 1.")
+    mode = resolve_mode(args)
 
     log_dir = Path(args.log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
-    run_id = time.strftime("%Y%m%d_%H%M%S_webshop_shadow")
+    run_id = time.strftime(f"%Y%m%d_%H%M%S_webshop_{mode}")
     env = make_webshop_env(args.env, repo_path=args.webshop_repo, num_products=args.num_products)
     client = build_client(args.model)
     agent = WebShopReactAgent(client)
@@ -53,7 +58,9 @@ def run_webshop_shadow(args: argparse.Namespace) -> dict[str, Any]:
         use_llm_judge=bool(args.use_llm_judge),
     )
     post_verifier = PostActionDeltaVerifier()
-    policy = ShadowInterventionPolicy()
+    shadow_policy = ShadowInterventionPolicy()
+    risk_router = RiskAwareActionRouter()
+    repair_engine = MinimalStateRepair()
 
     config = {
         "run_id": run_id,
@@ -63,32 +70,53 @@ def run_webshop_shadow(args: argparse.Namespace) -> dict[str, Any]:
         "num_tasks": args.num_tasks,
         "start_index": args.start_index,
         "max_steps": args.max_steps,
-        "shadow": True,
+        "mode": mode,
+        "shadow": mode == "shadow",
+        "intervention_enabled": mode == "intervention",
         "use_llm_judge": bool(args.use_llm_judge),
     }
     (log_dir / "config.json").write_text(json.dumps(config, indent=2, ensure_ascii=True) + "\n")
 
     summaries: list[dict[str, Any]] = []
-    with (log_dir / "steps.jsonl").open("w", encoding="utf-8") as step_fh, (
+    intervention_logger = InterventionLogger(log_dir)
+    try:
+        with (log_dir / "steps.jsonl").open("w", encoding="utf-8") as step_fh, (
         log_dir / "episodes.jsonl"
-    ).open("w", encoding="utf-8") as episode_fh:
-        for offset in range(args.num_tasks):
-            task_id = args.start_index + offset
-            summary = _run_episode(
-                run_id=run_id,
-                task_id=task_id,
-                env=env,
-                agent=agent,
-                pre_detector=pre_detector,
-                post_verifier=post_verifier,
-                policy=policy,
-                max_steps=args.max_steps,
-                step_fh=step_fh,
-            )
-            summaries.append(summary)
-            episode_fh.write(json.dumps(summary, ensure_ascii=True) + "\n")
-            episode_fh.flush()
+        ).open("w", encoding="utf-8") as episode_fh:
+            for offset in range(args.num_tasks):
+                task_id = args.start_index + offset
+                summary = _run_episode(
+                    run_id=run_id,
+                    task_id=task_id,
+                    env=env,
+                    agent=agent,
+                    pre_detector=pre_detector,
+                    post_verifier=post_verifier,
+                    shadow_policy=shadow_policy,
+                    risk_router=risk_router,
+                    repair_engine=repair_engine,
+                    mode=mode,
+                    max_steps=args.max_steps,
+                    step_fh=step_fh,
+                    intervention_logger=intervention_logger,
+                )
+                summaries.append(summary)
+                episode_fh.write(json.dumps(summary, ensure_ascii=True) + "\n")
+                episode_fh.flush()
+    finally:
+        intervention_logger.close()
     return {"config": config, "episodes": summaries}
+
+
+def resolve_mode(args: argparse.Namespace) -> str:
+    if getattr(args, "mode", None):
+        return str(args.mode)
+    shadow = str(getattr(args, "shadow", "true")).lower()
+    if shadow in {"true", "1", "yes"}:
+        return "shadow"
+    if shadow in {"false", "0", "no"}:
+        return "intervention"
+    raise ValueError(f"Invalid --shadow value: {args.shadow}")
 
 
 def build_client(model: str):
@@ -104,9 +132,13 @@ def _run_episode(
     agent: WebShopReactAgent,
     pre_detector: PreActionDetector,
     post_verifier: PostActionDeltaVerifier,
-    policy: ShadowInterventionPolicy,
+    shadow_policy: ShadowInterventionPolicy,
+    risk_router: RiskAwareActionRouter,
+    repair_engine: MinimalStateRepair,
+    mode: str,
     max_steps: int,
     step_fh: Any,
+    intervention_logger: InterventionLogger,
 ) -> dict[str, Any]:
     observation = env.reset(task_id)
     instruction = env.get_instruction_text()
@@ -117,30 +149,91 @@ def _run_episode(
     step_logs: list[dict[str, Any]] = []
     final_reward = 0.0
     done = False
+    pending_repair_action = ""
+    pending_repair_metadata: dict[str, Any] = {}
+    checkpoint_manager = CheckpointManager()
 
     for step_id in range(max_steps):
         available = env.get_available_actions()
         state_manager.update_observation(observation, available, step_id)
-        raw_action = agent.act(
-            task_instruction=instruction,
+        checkpoint = checkpoint_manager.create(
+            task_id=task_id,
+            step_id=step_id,
             observation=observation,
-            action_history=history,
             available_actions=available,
-            state_summary=state_manager.summary(),
+            state_snapshot=state_manager.snapshot(),
+            action_history=history,
         )
+        action_source = "agent"
+        agent_trace: dict[str, Any] = {}
+        agent_raw_action = ""
+        if mode == "intervention" and pending_repair_action:
+            raw_action = pending_repair_action
+            action_source = "post_action_repair"
+            pending_repair_action = ""
+            intervention_logger.log_event(
+                run_id,
+                task_id,
+                step_id,
+                "repair_action_executed",
+                pending_repair_metadata,
+            )
+            pending_repair_metadata = {}
+        else:
+            raw_action = agent.act(
+                task_instruction=instruction,
+                observation=observation,
+                action_history=history,
+                available_actions=available,
+                state_summary=state_manager.summary(),
+            )
+            agent_raw_action = raw_action
+            agent_trace = dict(agent.last_trace)
         state_manager.update_action(raw_action, step_id)
         state_before = state_manager.snapshot()
-        pre_report = pre_detector.detect(
-            task_instruction=instruction,
-            observation=observation,
-            raw_action=raw_action,
-            available_actions=available,
-            state_manager=state_manager,
-            action_history=history,
-        )
-        decision = policy.decide_before_action(pre_report, raw_action)
-        if decision.executed_action != raw_action:
+        if mode == "direct":
+            pre_report = default_pre_action_report(raw_action, "Direct mode: pre-action detector disabled.")
+            decision = direct_decision(raw_action)
+        else:
+            pre_report = pre_detector.detect(
+                task_instruction=instruction,
+                observation=observation,
+                raw_action=raw_action,
+                available_actions=available,
+                state_manager=state_manager,
+                action_history=history,
+            )
+            if mode == "shadow":
+                decision = shadow_policy.decide_before_action(pre_report, raw_action)
+            else:
+                decision = risk_router.decide_before_action(
+                    pre_action_report=pre_report,
+                    state_manager=state_manager,
+                    raw_action=raw_action,
+                    available_actions=available,
+                    action_history=history,
+                    observation=observation,
+                )
+
+        if mode == "shadow" and decision.executed_action != raw_action:
             raise AssertionError("Shadow mode violated: executed_action changed raw_action.")
+        if decision.executed_action != raw_action:
+            state_manager.update_action(decision.executed_action, step_id)
+            intervention_logger.log_event(
+                run_id,
+                task_id,
+                step_id,
+                "pre_action_changed",
+                decision.to_dict(),
+            )
+
+        executed_pre_report = pre_report.to_dict()
+        if decision.executed_action != raw_action:
+            parsed = parse_webshop_action(decision.executed_action)
+            executed_pre_report["raw_expected_delta"] = executed_pre_report.get("expected_delta", {})
+            executed_pre_report["expected_delta"] = expected_delta_for_action(
+                parsed.action_type, parsed.target.lower()
+            )
 
         next_observation, reward, done, info = env.step(decision.executed_action)
         final_reward = reward
@@ -151,23 +244,56 @@ def _run_episode(
             task_instruction=instruction,
             observation_before=observation,
             observation_after=next_observation,
-            raw_action=raw_action,
-            pre_action_report=pre_report.to_dict(),
+            raw_action=decision.executed_action,
+            pre_action_report=executed_pre_report,
             state_before=state_before,
             state_after=state_after,
             reward=reward,
             done=done,
             info=info,
         )
-        repair_decision = policy.repair_after_action(post_report)
+        if mode == "intervention":
+            repair_decision = repair_engine.repair_after_action(
+                post_action_report=post_report,
+                state_manager=state_manager,
+                checkpoint_manager=checkpoint_manager,
+                checkpoint_id=checkpoint.checkpoint_id,
+                available_actions=next_available,
+                action_history=history
+                + [
+                    {
+                        "step_id": step_id,
+                        "action": raw_action,
+                        "executed_action": decision.executed_action,
+                        "action_source": action_source,
+                    }
+                ],
+                done=done,
+            )
+            if repair_decision.repair_action and not done:
+                pending_repair_action = repair_decision.repair_action
+                pending_repair_metadata = repair_decision.to_dict()
+                intervention_logger.log_event(
+                    run_id,
+                    task_id,
+                    step_id,
+                    "post_action_repair_queued",
+                    repair_decision.to_dict(),
+                )
+        else:
+            repair_decision = shadow_policy.repair_after_action(post_report)
         step_log = {
             "run_id": run_id,
+            "mode": mode,
             "task_id": task_id,
             "step_id": step_id,
+            "checkpoint_id": checkpoint.checkpoint_id,
             "task_instruction": instruction,
             "observation_before": observation,
+            "agent_raw_action": agent_raw_action,
             "raw_action": raw_action,
             "executed_action": decision.executed_action,
+            "action_source": action_source,
             "action_history": history,
             "state_before": state_before,
             "pre_action_report": pre_report.to_dict(),
@@ -179,6 +305,13 @@ def _run_episode(
             "state_after": state_after,
             "post_action_report": post_report.to_dict(),
             "repair_decision": repair_decision.to_dict(),
+            "token_usage_estimate": {
+                "agent_prompt_tokens": int(agent_trace.get("estimated_prompt_tokens", 0)),
+                "agent_response_tokens": int(agent_trace.get("estimated_response_tokens", 0)),
+                "agent_total_tokens": int(agent_trace.get("estimated_total_tokens", 0)),
+                "intervention_tokens": 0,
+                "total_tokens": int(agent_trace.get("estimated_total_tokens", 0)),
+            },
         }
         step_fh.write(json.dumps(step_log, ensure_ascii=True) + "\n")
         step_fh.flush()
@@ -187,7 +320,10 @@ def _run_episode(
             {
                 "step_id": step_id,
                 "action": raw_action,
+                "agent_raw_action": agent_raw_action,
                 "executed_action": decision.executed_action,
+                "action_source": action_source,
+                "changed_action": decision.executed_action != raw_action,
                 "reward": reward,
                 "done": done,
                 "pre_risk_level": pre_report.risk_level,
@@ -199,6 +335,33 @@ def _run_episode(
             break
 
     return _episode_summary(task_id, instruction, final_reward, done, step_logs)
+
+
+def default_pre_action_report(action: str, reason: str) -> PreActionReport:
+    parsed = parse_webshop_action(action)
+    return PreActionReport(
+        risk_score=0.0,
+        risk_level="low",
+        should_block_hypothetical=False,
+        risk_categories=[],
+        missing_attributes=[],
+        unsupported_assumptions=[],
+        expected_delta=expected_delta_for_action(parsed.action_type, parsed.target.lower()),
+        reason=reason,
+    )
+
+
+def direct_decision(raw_action: str):
+    return InterventionDecision(
+        allow_execute=True,
+        raw_action=raw_action,
+        executed_action=raw_action,
+        would_block=False,
+        would_complete=False,
+        would_repair=False,
+        reason="Direct mode: raw agent action executed without detector routing.",
+        metadata={"mode": "direct", "changed_action": False},
+    )
 
 
 def _episode_summary(
@@ -225,6 +388,23 @@ def _episode_summary(
             risk_counts[category] = risk_counts.get(category, 0) + 1
         for category in step["post_action_report"].get("error_categories", []):
             post_counts[category] = post_counts.get(category, 0) + 1
+    changed_steps = [
+        step
+        for step in step_logs
+        if step.get("intervention_decision", {}).get("metadata", {}).get("changed_action")
+    ]
+    repair_steps = [
+        step
+        for step in step_logs
+        if step.get("repair_decision", {}).get("repair_executed")
+    ]
+    repair_action_steps = [
+        step for step in step_logs if step.get("action_source") == "post_action_repair"
+    ]
+    token_total = sum(
+        int(step.get("token_usage_estimate", {}).get("total_tokens", 0))
+        for step in step_logs
+    )
     return {
         "task_id": task_id,
         "task_instruction": instruction,
@@ -247,9 +427,13 @@ def _episode_summary(
             "potential_preventable_failure" in step["post_action_report"].get("error_categories", [])
             for step in step_logs
         ),
+        "num_changed_actions": len(changed_steps),
+        "num_repair_actions_queued": len(repair_steps),
+        "num_repair_actions_executed": len(repair_action_steps),
+        "had_intervention": bool(changed_steps or repair_steps or repair_action_steps),
+        "estimated_token_cost": token_total,
     }
 
 
 if __name__ == "__main__":
     main()
-

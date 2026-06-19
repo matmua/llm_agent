@@ -2,21 +2,26 @@
 
 ## Current Goal
 
-Current stage: WebShop Phase 1 shadow detection. The repo now includes a
-ReAct-style WebShop runner with structured entity-attribute state, pre-action
-shadow detection, post-action delta verification, and JSONL trajectory logs.
+Current stage: WebShop Phase 2 intervention. The repo includes a ReAct-style
+WebShop runner with structured entity-attribute state, Phase 1 shadow
+detection, and Phase 2 action routing plus minimal post-action repair.
 
 The earlier tau3/tau-bench work is still retained below for reference.
 
-## WebShop Phase 1 Shadow Mode
+## WebShop Phase 1/2 Modes
 
-Phase 1 is detection only. The detector can log high-risk actions, missing
+Phase 1 is detection only. The detector logs high-risk actions, missing
 attributes, hypothetical blocks, hypothetical completion actions, and repair
-plans, but it never changes execution. The runner asserts:
+plans, but it never changes execution. In `shadow` mode the runner asserts:
 
 ```text
 executed_action == raw_action
 ```
+
+Phase 2 adds `intervention` mode. Only this mode may change actions. It can
+inspect product details before buying, route invalid/high-risk actions to safer
+visible actions, checkpoint per step, repair contaminated state slots, queue a
+minimal repair action, and log every intervention event.
 
 Main modules:
 
@@ -26,8 +31,14 @@ Main modules:
 - `detectors/pre_action.py`: action format, provenance, missing precondition, premature buy, and optional LLM judge checks.
 - `detectors/post_action.py`: no-effect, transition, constraint conflict, unsupported update, and preventable failure checks.
 - `policies/shadow_policy.py`: no-op shadow intervention interface.
+- `policies/completion_policy.py`: attribute completion action policy.
+- `policies/risk_router.py`: intervention-mode action router.
+- `repair/checkpoint_manager.py`: per-step checkpoints.
+- `repair/minimal_state_repair.py`: minimal contaminated-slot repair and repair-action selection.
+- `runners/intervention_logger.py`: intervention event JSONL logger.
 - `runners/run_webshop_shadow.py`: official/mock WebShop runner.
 - `analysis/analyze_shadow_logs.py`: metrics, case extraction, and Markdown report generation.
+- `analysis/evaluate_interventions.py`: direct/shadow/intervention comparison report.
 
 ### WebShop Environment
 
@@ -86,7 +97,7 @@ Build the search index:
 '
 ```
 
-### Run WebShop Shadow
+### Run WebShop Modes
 
 Mock smoke run, no official dependencies:
 
@@ -98,10 +109,10 @@ Mock smoke run, no official dependencies:
   --max_steps 8 \
   --model mock \
   --log_dir logs/webshop_shadow \
-  --shadow true
+  --mode shadow
 ```
 
-Official WebShop small run:
+Official WebShop small direct/shadow/intervention run:
 
 ```bash
 ./no_proxy_run.sh bash -lc '
@@ -112,17 +123,38 @@ Official WebShop small run:
     --env official \
     --num_tasks 20 \
     --start_index 0 \
-    --max_steps 8 \
+    --max_steps 10 \
     --model mock \
-    --log_dir logs/webshop_shadow_official_small \
-    --shadow true
+    --mode direct \
+    --log_dir logs/webshop_phase2_direct
+  /root/miniconda3/envs/webshop/bin/python -m runners.run_webshop_shadow \
+    --env official \
+    --num_tasks 20 \
+    --start_index 0 \
+    --max_steps 10 \
+    --model mock \
+    --mode shadow \
+    --log_dir logs/webshop_phase2_shadow
+  /root/miniconda3/envs/webshop/bin/python -m runners.run_webshop_shadow \
+    --env official \
+    --num_tasks 20 \
+    --start_index 0 \
+    --max_steps 10 \
+    --model mock \
+    --mode intervention \
+    --log_dir logs/webshop_phase2_intervention
+  /root/miniconda3/envs/webshop/bin/python -m analysis.evaluate_interventions \
+    --direct logs/webshop_phase2_direct \
+    --shadow logs/webshop_phase2_shadow \
+    --intervention logs/webshop_phase2_intervention \
+    --report_dir reports/webshop_phase2
 '
 ```
 
 Use a real OpenAI-compatible model by setting `LLM_MODEL`, `LLM_BASE_URL`, and
 `LLM_API_KEY`, then pass `--model "$LLM_MODEL"`.
 
-Generate reports:
+Generate a Phase 1 shadow-only report:
 
 ```bash
 ./no_proxy_run.sh python -m analysis.analyze_shadow_logs \
@@ -132,15 +164,26 @@ Generate reports:
 
 Current WebShop reports:
 
+- `reports/webshop_phase2/intervention_comparison.md`
+- `reports/webshop_phase2/intervention_metrics.json`
+- `reports/webshop_phase2/task_logs/`
+- `reports/webshop_phase2/raw_logs/`
 - `reports/webshop_official_small/webshop_shadow_summary.md`
 - `reports/webshop_official_small/webshop_shadow_metrics.json`
 - `reports/webshop_official_small/webshop_shadow_cases.jsonl`
 - `reports/webshop_shadow_summary.md` for the mock smoke run.
 
-Current official small smoke result: 20 episodes, 60 steps, 13/20 success with
-the deterministic mock agent. This is not a model-quality result; it verifies
-that the official WebShop loop, state tracking, shadow detection, logs, and
-analysis run end to end.
+Current official small Phase 2 result with the deterministic mock agent:
+
+| Mode | Success | Success Rate | Avg Steps | Avg Reward |
+|---|---:|---:|---:|---:|
+| direct | 13/20 | 0.6500 | 3.0000 | 0.2662 |
+| shadow | 13/20 | 0.6500 | 3.0000 | 0.2662 |
+| intervention | 14/20 | 0.7000 | 4.3500 | 0.2807 |
+
+This is not a model-quality result; it verifies that the official WebShop loop,
+state tracking, shadow detection, intervention routing, repair logging, raw
+trajectory export, and comparison analysis run end to end.
 
 All runtime commands should be launched through `./no_proxy_run.sh` so project
 traffic uses the server network instead of inherited local proxy variables.

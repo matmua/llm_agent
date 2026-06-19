@@ -42,6 +42,11 @@ class RepairDecision:
     repair_executed: bool
     reason: str
     hypothetical_repair_plan: str = ""
+    repair_action: str = ""
+    contaminated_slots: list[str] = field(default_factory=list)
+    repaired_slots: list[str] = field(default_factory=list)
+    checkpoint_id: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -49,6 +54,11 @@ class RepairDecision:
             "repair_executed": self.repair_executed,
             "reason": self.reason,
             "hypothetical_repair_plan": self.hypothetical_repair_plan,
+            "repair_action": self.repair_action,
+            "contaminated_slots": self.contaminated_slots,
+            "repaired_slots": self.repaired_slots,
+            "checkpoint_id": self.checkpoint_id,
+            "metadata": self.metadata,
         }
 
 
@@ -78,4 +88,3 @@ class ShadowInterventionPolicy:
             reason="Phase 1 shadow mode: no post-action repair, rollback, or state repair is executed.",
             hypothetical_repair_plan=str(getattr(post_action_report, "hypothetical_repair_plan", "")),
         )
-

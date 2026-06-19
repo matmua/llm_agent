@@ -222,7 +222,7 @@ def _requires_fine_grained_evidence(text: str) -> bool:
 
 def _saw_detail_page(action_history: list[dict[str, Any]]) -> bool:
     for item in action_history:
-        action = str(item.get("action", "")).lower()
+        action = str(item.get("executed_action") or item.get("action") or "").lower()
         if action in {"click[description]", "click[features]", "click[reviews]"}:
             return True
     return False

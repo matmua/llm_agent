@@ -28,8 +28,10 @@ COLORS = {
 SIZES = {"xs", "small", "medium", "large", "xl", "xxl", "queen", "king", "twin"}
 NAV_CLICKABLES = {
     "next",
+    "next >",
     "previous",
     "prev",
+    "< prev",
     "back to search",
     "description",
     "features",
@@ -209,9 +211,45 @@ class StateManager:
                 observation = page.current_product_id_or_name.evidence_text.lower()
                 if str(requirement.value).lower() not in observation:
                     missing.append(name)
+            elif name == "price_constraint":
+                try:
+                    if float(product_attr.value) > float(requirement.value):
+                        missing.append(name)
+                except (TypeError, ValueError):
+                    missing.append(name)
+            elif str(requirement.value).lower() in str(product_attr.evidence_text).lower():
+                continue
             elif str(product_attr.value).lower() != str(requirement.value).lower():
                 missing.append(name)
         return missing
+
+    def repair_candidate_slots(self, contaminated_slots: list[str], step_id: int) -> list[str]:
+        page = self.graph.page_state
+        if page is None or page.current_product_id_or_name is None:
+            return []
+        current_name = str(page.current_product_id_or_name.value).lower()
+        product = self.graph.candidate_products.get(current_name)
+        if product is None:
+            return []
+        repaired: list[str] = []
+        for slot in contaminated_slots:
+            normalized = slot.split(".")[-1].replace("_constraint", "")
+            if normalized in {"color", "size", "brand", "price", "rating"} and hasattr(product, normalized):
+                if getattr(product, normalized) is not None:
+                    setattr(product, normalized, None)
+                    repaired.append(f"{current_name}.{normalized}")
+        if repaired:
+            self.graph.conflicts.append(
+                {
+                    "attribute": "minimal_state_repair",
+                    "old_value": contaminated_slots,
+                    "new_value": repaired,
+                    "step_id": step_id,
+                    "evidence_text": "Cleared only contaminated candidate-product slots.",
+                }
+            )
+            self._record_history("minimal_state_repair", step_id)
+        return repaired
 
     def _hard_constraint_names(self) -> list[str]:
         names = []
@@ -410,6 +448,8 @@ def infer_page_type(observation: str, available_actions: dict[str, Any]) -> str:
         return "product_page"
     if "description" in clickables or "features" in clickables or "reviews" in clickables:
         return "product_page"
+    if "< prev" in clickables and clickables.issubset(NAV_CLICKABLES):
+        return "detail_page"
     if clickables and any(item not in NAV_CLICKABLES for item in clickables):
         return "results_page"
     if available_actions.get("has_search_bar"):
@@ -455,6 +495,10 @@ def expected_delta_for_action(action_type: str, target: str) -> dict[str, Any]:
         return {"expected_page_type": "done_page", "expected_done": True}
     if action_type == "click" and target in {"description", "features", "reviews"}:
         return {"expected_page_type": "detail_page", "expected_new_information": True}
+    if action_type == "click" and target in {"< prev", "prev", "previous"}:
+        return {"expected_page_type": "product_page", "expected_new_information": True}
+    if action_type == "click" and target == "back to search":
+        return {"expected_page_type": "search_page", "expected_new_information": True}
     if action_type == "click":
         return {"expected_page_type": "product_page", "expected_new_information": True}
     return {"expected_page_type": "unknown"}

@@ -87,6 +87,13 @@ class PostActionDeltaVerifier:
         conflicts.extend(_constraint_conflicts(task_instruction, observation_after, state_after))
         if conflicts:
             categories.append("constraint_conflict")
+            contaminated.extend(
+                [
+                    f"current_product.{conflict.get('attribute')}"
+                    for conflict in conflicts
+                    if conflict.get("attribute")
+                ]
+            )
         unsupported_slots = _unsupported_state_updates(state_after)
         if unsupported_slots:
             categories.append("unsupported_state_update")
