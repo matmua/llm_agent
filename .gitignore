@@ -12,9 +12,18 @@ data/
 runs/
 outputs/
 logs/
+reports/*
+!reports/demo_shadow/
+!reports/demo_shadow/**
 __pycache__/
+**/__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 *.pyc
 *.py[cod]
 *$py.class
+*.tmp.jsonl
+*.scratch.jsonl
 
 .DS_Store

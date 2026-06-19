@@ -49,6 +49,8 @@ class WebShopReactAgent:
             "estimated_prompt_tokens": estimate_tokens(prompt),
             "estimated_response_tokens": estimate_tokens(response),
             "estimated_total_tokens": estimate_tokens(prompt) + estimate_tokens(response),
+            "prompt_contains_state_summary": "Current task state summary:" in prompt,
+            "prompt_excerpt": prompt[:4000],
             "raw_response": response[:2000],
         }
         return action
@@ -63,13 +65,14 @@ class WebShopReactAgent:
     ) -> str:
         recent_history = action_history[-6:]
         clickables = available_actions.get("clickables", [])
+        state_block = f"Current task state summary:\n{state_summary}\n" if state_summary else ""
         return (
             f"Task instruction:\n{task_instruction}\n"
             f"Observation:\n{observation}\n"
             "Available actions:\n"
             f"has_search_bar: {str(bool(available_actions.get('has_search_bar'))).lower()}\n"
             f"clickables: {clickables}\n"
-            f"Current task state summary:\n{state_summary}\n"
+            f"{state_block}"
             f"Recent action history:\n{recent_history}\n\n"
             "Think briefly, then output one line in this exact form:\n"
             "Action: search[keywords]\n"

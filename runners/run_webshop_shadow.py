@@ -20,7 +20,9 @@ from repair.checkpoint_manager import CheckpointManager
 from repair.minimal_state_repair import MinimalStateRepair
 from runners.intervention_logger import InterventionLogger
 from runners.webshop_env import make_webshop_env
-from state.entity_state import StateManager, expected_delta_for_action
+from state.entity_state import expected_delta_for_action
+from state.llm_state_proposer import LLMStateProposer
+from state.state_manager import StateManager
 
 
 def main() -> None:
@@ -31,6 +33,7 @@ def main() -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_tasks", type=int, default=20)
+    parser.add_argument("--max_tasks", type=int, default=None)
     parser.add_argument("--start_index", type=int, default=0)
     parser.add_argument("--max_steps", type=int, default=15)
     parser.add_argument("--model", default=os.getenv("LLM_MODEL") or os.getenv("QWEN_MODEL") or "mock")
@@ -41,11 +44,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--webshop_repo", default="external/webshop")
     parser.add_argument("--num_products", type=int, default=1000)
     parser.add_argument("--use_llm_judge", action="store_true")
+    parser.add_argument("--use_llm_state", default="false")
+    parser.add_argument("--state_builder", choices=["rule", "llm", "llm_hybrid"], default="rule")
+    parser.add_argument("--state_to_agent", default="false")
     return parser.parse_args()
 
 
 def run_webshop_shadow(args: argparse.Namespace) -> dict[str, Any]:
     mode = resolve_mode(args)
+    if getattr(args, "max_tasks", None) is not None:
+        args.num_tasks = int(args.max_tasks)
+    state_to_agent = parse_bool(getattr(args, "state_to_agent", "false"))
+    use_llm_state = parse_bool(getattr(args, "use_llm_state", "false"))
+    state_builder = str(getattr(args, "state_builder", "rule"))
 
     log_dir = Path(args.log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -59,8 +70,9 @@ def run_webshop_shadow(args: argparse.Namespace) -> dict[str, Any]:
     )
     post_verifier = PostActionDeltaVerifier()
     shadow_policy = ShadowInterventionPolicy()
-    risk_router = RiskAwareActionRouter()
-    repair_engine = MinimalStateRepair()
+    risk_router = RiskAwareActionRouter() if mode == "intervention" else None
+    repair_engine = MinimalStateRepair() if mode == "intervention" else None
+    llm_state_proposer = LLMStateProposer(client) if use_llm_state else None
 
     config = {
         "run_id": run_id,
@@ -74,6 +86,9 @@ def run_webshop_shadow(args: argparse.Namespace) -> dict[str, Any]:
         "shadow": mode == "shadow",
         "intervention_enabled": mode == "intervention",
         "use_llm_judge": bool(args.use_llm_judge),
+        "use_llm_state": use_llm_state,
+        "state_builder": state_builder,
+        "state_to_agent": state_to_agent,
     }
     (log_dir / "config.json").write_text(json.dumps(config, indent=2, ensure_ascii=True) + "\n")
 
@@ -95,6 +110,10 @@ def run_webshop_shadow(args: argparse.Namespace) -> dict[str, Any]:
                     shadow_policy=shadow_policy,
                     risk_router=risk_router,
                     repair_engine=repair_engine,
+                    llm_state_proposer=llm_state_proposer,
+                    state_builder=state_builder,
+                    use_llm_state=use_llm_state,
+                    state_to_agent=state_to_agent,
                     mode=mode,
                     max_steps=args.max_steps,
                     step_fh=step_fh,
@@ -125,6 +144,10 @@ def build_client(model: str):
     return OpenAIChatClient.from_env(model=model)
 
 
+def parse_bool(value: Any) -> bool:
+    return str(value).lower() in {"true", "1", "yes", "y"}
+
+
 def _run_episode(
     run_id: str,
     task_id: int,
@@ -133,8 +156,12 @@ def _run_episode(
     pre_detector: PreActionDetector,
     post_verifier: PostActionDeltaVerifier,
     shadow_policy: ShadowInterventionPolicy,
-    risk_router: RiskAwareActionRouter,
-    repair_engine: MinimalStateRepair,
+    risk_router: RiskAwareActionRouter | None,
+    repair_engine: MinimalStateRepair | None,
+    llm_state_proposer: LLMStateProposer | None,
+    state_builder: str,
+    use_llm_state: bool,
+    state_to_agent: bool,
     mode: str,
     max_steps: int,
     step_fh: Any,
@@ -143,7 +170,11 @@ def _run_episode(
     observation = env.reset(task_id)
     instruction = env.get_instruction_text()
     available = env.get_available_actions()
-    state_manager = StateManager()
+    state_manager = StateManager(
+        state_builder=state_builder,
+        use_llm_state=use_llm_state,
+        llm_state_proposer=llm_state_proposer,
+    )
     state_manager.reset(instruction, observation, available, step_id=0)
     history: list[dict[str, Any]] = []
     step_logs: list[dict[str, Any]] = []
@@ -151,18 +182,23 @@ def _run_episode(
     done = False
     pending_repair_action = ""
     pending_repair_metadata: dict[str, Any] = {}
-    checkpoint_manager = CheckpointManager()
+    checkpoint_manager = CheckpointManager() if mode == "intervention" else None
 
     for step_id in range(max_steps):
         available = env.get_available_actions()
         state_manager.update_observation(observation, available, step_id)
-        checkpoint = checkpoint_manager.create(
-            task_id=task_id,
-            step_id=step_id,
-            observation=observation,
-            available_actions=available,
-            state_snapshot=state_manager.snapshot(),
-            action_history=history,
+        state_update_before_action = dict(state_manager.last_update_metadata)
+        checkpoint = (
+            checkpoint_manager.create(
+                task_id=task_id,
+                step_id=step_id,
+                observation=observation,
+                available_actions=available,
+                state_snapshot=state_manager.snapshot(),
+                action_history=history,
+            )
+            if checkpoint_manager is not None
+            else None
         )
         action_source = "agent"
         agent_trace: dict[str, Any] = {}
@@ -185,7 +221,7 @@ def _run_episode(
                 observation=observation,
                 action_history=history,
                 available_actions=available,
-                state_summary=state_manager.summary(),
+                state_summary=state_manager.summary_for_detector() if state_to_agent else "",
             )
             agent_raw_action = raw_action
             agent_trace = dict(agent.last_trace)
@@ -206,6 +242,8 @@ def _run_episode(
             if mode == "shadow":
                 decision = shadow_policy.decide_before_action(pre_report, raw_action)
             else:
+                if risk_router is None:
+                    raise AssertionError("Intervention mode requires a RiskAwareActionRouter.")
                 decision = risk_router.decide_before_action(
                     pre_action_report=pre_report,
                     state_manager=state_manager,
@@ -239,6 +277,7 @@ def _run_episode(
         final_reward = reward
         next_available = env.get_available_actions()
         state_manager.update_observation(next_observation, next_available, step_id + 1)
+        state_update_after_action = dict(state_manager.last_update_metadata)
         state_after = state_manager.snapshot()
         post_report = post_verifier.verify(
             task_instruction=instruction,
@@ -253,6 +292,8 @@ def _run_episode(
             info=info,
         )
         if mode == "intervention":
+            if repair_engine is None or checkpoint_manager is None or checkpoint is None:
+                raise AssertionError("Intervention mode requires repair and checkpoint managers.")
             repair_decision = repair_engine.repair_after_action(
                 post_action_report=post_report,
                 state_manager=state_manager,
@@ -287,8 +328,11 @@ def _run_episode(
             "mode": mode,
             "task_id": task_id,
             "step_id": step_id,
-            "checkpoint_id": checkpoint.checkpoint_id,
+            "checkpoint_id": checkpoint.checkpoint_id if checkpoint else "",
             "task_instruction": instruction,
+            "state_to_agent": state_to_agent,
+            "state_builder": state_builder,
+            "use_llm_state": use_llm_state,
             "observation_before": observation,
             "agent_raw_action": agent_raw_action,
             "raw_action": raw_action,
@@ -296,6 +340,7 @@ def _run_episode(
             "action_source": action_source,
             "action_history": history,
             "state_before": state_before,
+            "state_update_before_action": state_update_before_action,
             "pre_action_report": pre_report.to_dict(),
             "intervention_decision": decision.to_dict(),
             "observation_after": next_observation,
@@ -303,6 +348,12 @@ def _run_episode(
             "done": done,
             "info": info,
             "state_after": state_after,
+            "state_update_after_action": state_update_after_action,
+            "llm_state_proposal_raw": state_update_after_action.get("llm_state_proposal_raw", ""),
+            "llm_state_proposal_parse_error": state_update_after_action.get(
+                "llm_state_proposal_parse_error", ""
+            ),
+            "normalized_state_delta": state_update_after_action.get("normalized_state_delta", {}),
             "post_action_report": post_report.to_dict(),
             "repair_decision": repair_decision.to_dict(),
             "token_usage_estimate": {
@@ -312,6 +363,9 @@ def _run_episode(
                 "intervention_tokens": 0,
                 "total_tokens": int(agent_trace.get("estimated_total_tokens", 0)),
             },
+            "agent_prompt_contains_state_summary": bool(
+                agent_trace.get("prompt_contains_state_summary", False)
+            ),
         }
         step_fh.write(json.dumps(step_log, ensure_ascii=True) + "\n")
         step_fh.flush()

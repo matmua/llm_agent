@@ -8,6 +8,11 @@ import re
 from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any
 
+from state.base_state import ActionRecord, StateGraph
+from state.domain_adapters.webshop_adapter import WebShopAdapter
+from state.llm_state_proposer import LLMStateProposer
+from state.state_normalizer import StateNormalizer
+
 
 COLORS = {
     "red",
@@ -111,9 +116,22 @@ class EntityAttributeStateGraph:
 
 
 class StateManager:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        state_builder: str = "rule",
+        use_llm_state: bool = False,
+        llm_state_proposer: LLMStateProposer | None = None,
+        domain_adapter: WebShopAdapter | None = None,
+    ) -> None:
         self.graph = EntityAttributeStateGraph()
+        self.generic_graph = StateGraph()
         self.instruction = ""
+        self.state_builder = state_builder
+        self.use_llm_state = use_llm_state
+        self.llm_state_proposer = llm_state_proposer
+        self.domain_adapter = domain_adapter or WebShopAdapter()
+        self.normalizer = StateNormalizer()
+        self.last_update_metadata: dict[str, Any] = {}
 
     def reset(
         self,
@@ -123,6 +141,7 @@ class StateManager:
         step_id: int = 0,
     ) -> None:
         self.graph = EntityAttributeStateGraph()
+        self.generic_graph = StateGraph()
         self.instruction = instruction
         self._update_task_requirements(instruction, step_id)
         self.update_observation(observation, available_actions, step_id)
@@ -133,6 +152,7 @@ class StateManager:
         available_actions: dict[str, Any],
         step_id: int,
     ) -> None:
+        legacy_before = len(self.graph.state_history)
         page_type = infer_page_type(observation, available_actions)
         query = infer_query(observation)
         visible = infer_visible_products(available_actions)
@@ -155,6 +175,8 @@ class StateManager:
         if current:
             self._upsert_candidate(current, observation, step_id)
         self._record_history("observation", step_id)
+        self._update_generic_state(observation, available_actions, step_id)
+        self.last_update_metadata["legacy_state_events_added"] = len(self.graph.state_history) - legacy_before
 
     def update_action(self, action: str, step_id: int) -> None:
         action_type, target = parse_action_parts(action)
@@ -166,12 +188,26 @@ class StateManager:
             missing_preconditions=[],
             expected_delta=expected_delta_for_action(action_type, target),
         )
+        self.generic_graph.action_state = ActionRecord(
+            action_text=action,
+            action_type=action_type,
+            action_target=target,
+            expected_delta=expected_delta_for_action(action_type, target),
+            source_supported=True,
+            missing_preconditions=[],
+        )
         self._record_history("action", step_id)
 
     def snapshot(self) -> dict[str, Any]:
-        return copy.deepcopy(self.graph.to_dict())
+        legacy = copy.deepcopy(self.graph.to_dict())
+        legacy["generic_state_graph"] = copy.deepcopy(self.generic_graph.to_dict())
+        legacy["state_builder"] = self.state_builder
+        return legacy
 
     def summary(self) -> str:
+        return self.summary_for_detector()
+
+    def summary_for_detector(self) -> str:
         req = {
             key: record.value
             for key, record in self.graph.task_requirement.items()
@@ -189,9 +225,79 @@ class StateManager:
                 "page_type": page,
                 "current_product": current,
                 "conflicts": self.graph.conflicts[-3:],
+                "generic_entities": len(self.generic_graph.entities),
+                "generic_constraints": len(self.generic_graph.constraints),
             },
             ensure_ascii=True,
         )
+
+    def _update_generic_state(
+        self,
+        observation: str,
+        available_actions: dict[str, Any],
+        step_id: int,
+    ) -> None:
+        previous_snapshot = self.generic_graph.to_dict()
+        last_action = self.graph.action_state.last_action if self.graph.action_state else ""
+        llm_raw = ""
+        llm_parse_error = ""
+        fallback_used = False
+        normalized_errors: list[str] = []
+        merge_delta: dict[str, Any] = {}
+
+        proposal: dict[str, Any] | None = None
+        if self.state_builder in {"llm", "llm_hybrid"} and self.use_llm_state and self.llm_state_proposer:
+            result = self.llm_state_proposer.propose(
+                task_instruction=self.instruction,
+                observation=observation,
+                available_actions=available_actions,
+                previous_state_snapshot=previous_snapshot,
+                last_action=last_action,
+                step_id=step_id,
+            )
+            llm_raw = result.raw_response
+            llm_parse_error = result.parse_error or result.request_error
+            if result.ok and result.parsed is not None:
+                proposal = result.parsed
+            else:
+                fallback_used = True
+
+        if proposal is None:
+            proposal = self.domain_adapter.build_proposal(
+                task_instruction=self.instruction,
+                observation=observation,
+                available_actions=available_actions,
+                step_id=step_id,
+                last_action=last_action,
+            )
+            fallback_used = fallback_used or self.state_builder in {"llm", "llm_hybrid"}
+        elif self.state_builder == "llm_hybrid":
+            adapter_proposal = self.domain_adapter.build_proposal(
+                task_instruction=self.instruction,
+                observation=observation,
+                available_actions=available_actions,
+                step_id=step_id,
+                last_action=last_action,
+            )
+            proposal = _combine_proposals(proposal, adapter_proposal)
+
+        normalized = self.normalizer.normalize(proposal, step_id=step_id)
+        normalized_errors.extend(normalized.errors)
+        merged = self.normalizer.merge(self.generic_graph, normalized.graph, step_id=step_id)
+        merge_delta = merged.delta
+        self.generic_graph = merged.graph
+        self.last_update_metadata = {
+            "state_builder": self.state_builder,
+            "use_llm_state": self.use_llm_state,
+            "llm_state_proposal_raw": llm_raw,
+            "llm_state_proposal_parse_error": llm_parse_error,
+            "state_fallback_used": fallback_used,
+            "normalized_state_delta": merge_delta,
+            "normalized_state_errors": normalized_errors,
+            "generic_entities": len(self.generic_graph.entities),
+            "generic_constraints": len(self.generic_graph.constraints),
+            "generic_conflicts": len(self.generic_graph.conflicts),
+        }
 
     def missing_hard_constraints_for_current_product(self) -> list[str]:
         page = self.graph.page_state
@@ -511,3 +617,26 @@ def _validate_attribute(record: Any, path: str, errors: list[str]) -> None:
     for field_name in ("name", "source", "confidence", "evidence_text", "updated_at_step"):
         if not hasattr(record, field_name):
             errors.append(f"{path}.{field_name} is missing")
+
+
+def _empty_proposal() -> dict[str, Any]:
+    return {
+        "entities": [],
+        "constraints": [],
+        "relations": [],
+        "goals": [],
+        "current_observation_summary": "",
+        "expected_state_changes_from_last_action": [],
+        "uncertain_or_missing_information": [],
+    }
+
+
+def _combine_proposals(primary: dict[str, Any], secondary: dict[str, Any]) -> dict[str, Any]:
+    combined = dict(primary)
+    for key in ("entities", "constraints", "relations", "goals"):
+        combined[key] = list(primary.get(key) or []) + list(secondary.get(key) or [])
+    for key in ("expected_state_changes_from_last_action", "uncertain_or_missing_information"):
+        combined[key] = list(primary.get(key) or []) + list(secondary.get(key) or [])
+    if not combined.get("current_observation_summary"):
+        combined["current_observation_summary"] = secondary.get("current_observation_summary", "")
+    return combined

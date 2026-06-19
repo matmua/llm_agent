@@ -84,7 +84,7 @@ class PreActionDetector:
             product_type = state_manager.graph.task_requirement.get("product_type")
             if product_type is None or not product_type.value:
                 missing.append("product_type")
-                categories.append("missing_attribute")
+                categories.append("missing_evidence")
             if product_type and product_type.value and not _has_overlap(parsed.target, str(product_type.value)):
                 unsupported.append("search_query_not_grounded_in_product_type")
                 categories.append("unsupported_inference")
@@ -109,6 +109,8 @@ class PreActionDetector:
                 hard_missing = state_manager.missing_hard_constraints_for_current_product()
                 if hard_missing:
                     missing.extend(hard_missing)
+                    categories.append("missing_evidence")
+                    categories.append("missing_hard_constraint")
                     categories.append("missing_attribute")
                     categories.append("premature_buy")
                 if _requires_fine_grained_evidence(task_instruction) and not _saw_detail_page(action_history):
@@ -229,8 +231,8 @@ def _saw_detail_page(action_history: list[dict[str, Any]]) -> bool:
 
 
 def _score(categories: list[str]) -> tuple[float, str]:
-    high = {"invalid_action", "missing_attribute", "premature_buy"}
-    medium = {"unsupported_inference", "insufficient_evidence"}
+    high = {"invalid_action", "missing_hard_constraint", "premature_buy"}
+    medium = {"unsupported_inference", "insufficient_evidence", "missing_evidence", "missing_attribute"}
     if any(item in high for item in categories):
         return 0.85, "high"
     if any(item in medium for item in categories):
