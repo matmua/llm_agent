@@ -1,22 +1,29 @@
+# Local secrets and task notes
+.env
+*.env
+.env.*
+!.env.example
+任务安排.md
+
+# Runtime dependencies and caches
 models/
 external/
 data/
 .venv-tau2/
 .uv-cache/
 .hf-cache/
-
-.env
-*.env
-.env.*
-!.env.example
 runs/
 outputs/
-logs/
+
+# Experiment artifacts: ignore by default, keep the current required run.
+logs/*
+!logs/webshop_shadow_qwen20_max15/
+!logs/webshop_shadow_qwen20_max15/**
 reports/*
-!reports/demo_shadow/
-!reports/demo_shadow/**
-!reports/webshop_qwen_shadow_analysis/
-!reports/webshop_qwen_shadow_analysis/**
+!reports/webshop_shadow_qwen20_max15/
+!reports/webshop_shadow_qwen20_max15/**
+
+# Python/cache noise
 __pycache__/
 **/__pycache__/
 .pytest_cache/
@@ -27,5 +34,6 @@ __pycache__/
 *$py.class
 *.tmp.jsonl
 *.scratch.jsonl
+*.tmp
 
 .DS_Store
