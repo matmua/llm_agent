@@ -78,6 +78,9 @@ Mock smoke run:
 
 ## Outputs
 
+- `logs/rule_shadow_v1_repeat_webshop20/trajectories.jsonl`
+- `reports/rule_shadow_v1_repeat_webshop20/metrics.json`
+- `reports/rule_shadow_v1_repeat_webshop20/summary_zh.md`
 - `logs/rule_shadow_v1_webshop20/trajectories.jsonl`
 - `logs/rule_shadow_v1_webshop20/state_snapshots_compact.jsonl`
 - `reports/rule_shadow_v1_webshop20/metrics.json`

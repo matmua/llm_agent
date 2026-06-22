@@ -50,8 +50,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_steps", type=int, default=15)
     parser.add_argument("--model", default=os.getenv("LLM_MODEL") or os.getenv("QWEN_MODEL") or "mock")
     parser.add_argument("--state_to_agent", default="false")
-    parser.add_argument("--log_dir", default="logs/rule_shadow_v1_webshop20")
-    parser.add_argument("--report_dir", default="reports/rule_shadow_v1_webshop20")
+    parser.add_argument("--log_dir", default="logs/rule_shadow_v1_repeat_webshop20")
+    parser.add_argument("--report_dir", default="reports/rule_shadow_v1_repeat_webshop20")
     return parser.parse_args()
 
 
@@ -67,7 +67,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     config = {
         "mode": "shadow",
-        "version": "rule_shadow_v1",
+        "version": "rule_shadow_v1_repeat",
         "env": env.env_name,
         "requested_env": args.env,
         "num_samples": args.num_samples,
@@ -157,6 +157,8 @@ def _run_episode(
         post_check = run_post_check(
             attributes_before=attributes_before,
             observed_attrs_after=observed_after,
+            action_record=action_record,
+            shadow_state=shadow_state,
             context_after=str(observed_after["context.current"]["current_value"]),
         )
         action_record["post_check"] = post_check
@@ -233,6 +235,30 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
         "repeat_known_no_info_count": sum(
             1 for item in action_records if item.get("pre_check", {}).get("repeat_known_no_info")
         ),
+        "visible_delta_true_count": sum(
+            1 for item in action_records if item.get("post_check", {}).get("visible_delta")
+        ),
+        "visible_delta_false_count": sum(
+            1 for item in action_records if not item.get("post_check", {}).get("visible_delta")
+        ),
+        "no_progress_count": sum(
+            1 for item in action_records if item.get("post_check", {}).get("no_progress")
+        ),
+        "same_action_repeated_no_progress_count": sum(
+            1
+            for item in action_records
+            if item.get("post_check", {}).get("no_progress_reason")
+            == "same_action_repeated_without_visible_delta"
+        ),
+        "context_cycle_no_progress_count": sum(
+            1
+            for item in action_records
+            if item.get("post_check", {}).get("no_progress_reason")
+            == "context_cycle_without_visible_delta"
+        ),
+        "context_cycle_detected_count": sum(
+            1 for item in action_records if item.get("post_check", {}).get("context_cycle_detected")
+        ),
         "info_gain_true_count": sum(
             1 for item in action_records if item.get("post_check", {}).get("info_gain")
         ),
@@ -260,18 +286,22 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
 
 
 def render_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) -> str:
-    examples = _example_records(trajectories, limit=3)
+    examples = _example_records(trajectories)
     lines = [
-        "# rule-based shadow v1 WebShop20 报告",
+        "# rule-based shadow v1 repeat WebShop20 报告",
         "",
-        "本次实现是 rule-based shadow v1：只维护 attributes 表和 actions 表。",
+        "本次是 rule-based shadow v1 的通用重复/循环无进展检测版本。",
         "",
         "- 没有使用 LLM detector。",
         "- 没有使用 LLM state proposer。",
         "- 没有把 shadow state 注入 agent prompt。",
         "- 没有执行修复、阻断、回滚或 action 改写。",
-        "- pre 只检测格式是否合法、是否重复执行已知 no-info action。",
-        "- post 只检测 action 后是否出现新的 attribute value。",
+        "- 没有加入 WebShop 颜色/尺码/option 专用规则。",
+        "- pre 只检测格式是否合法、当前 action 是否将成为第 3 次重复无可见变化。",
+        "- post 将 visible_delta 和 no_progress 分离。",
+        "- visible_delta=False 不直接等于 no_progress。",
+        "- no_progress 只由 same action + same params 第 3 次无可见变化，或 context A-B-A-B 循环且无可见变化触发。",
+        "- info_gain 是兼容字段，等价于 visible_delta，不再等价于 no_progress。",
         "",
         "## 统计结果",
         "",
@@ -283,6 +313,12 @@ def render_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) 
         f"- 平均步数：{metrics['avg_steps']:.2f}",
         f"- format_invalid_count：{metrics['format_invalid_count']}",
         f"- repeat_known_no_info_count：{metrics['repeat_known_no_info_count']}",
+        f"- visible_delta_true_count：{metrics['visible_delta_true_count']}",
+        f"- visible_delta_false_count：{metrics['visible_delta_false_count']}",
+        f"- no_progress_count：{metrics['no_progress_count']}",
+        f"- same_action_repeated_no_progress_count：{metrics['same_action_repeated_no_progress_count']}",
+        f"- context_cycle_no_progress_count：{metrics['context_cycle_no_progress_count']}",
+        f"- context_cycle_detected_count：{metrics['context_cycle_detected_count']}",
         f"- info_gain_true_count：{metrics['info_gain_true_count']}",
         f"- info_gain_false_count：{metrics['info_gain_false_count']}",
         f"- param_known_count：{metrics['param_known_count']}",
@@ -292,7 +328,7 @@ def render_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) 
         "",
         "## 最终检查",
         "",
-        "- 运行命令：`python -m runners.run_webshop_shadow --env official --num_samples 20 --start_index 0 --max_steps 15 --model qwen3-8b --state_to_agent false --log_dir logs/rule_shadow_v1_webshop20 --report_dir reports/rule_shadow_v1_webshop20`",
+        "- 运行命令：`python -m runners.run_webshop_shadow --env official --num_samples 20 --start_index 0 --max_steps 15 --model qwen3-8b --state_to_agent false --log_dir logs/rule_shadow_v1_repeat_webshop20 --report_dir reports/rule_shadow_v1_repeat_webshop20`",
         "- 活跃 shadow 入口：`runners/run_webshop_shadow.py`。",
         "- 活跃 shadow core：`shadow/state.py`, `shadow/parser.py`, `shadow/extractor.py`, `shadow/pre.py`, `shadow/post.py`, `shadow/repair.py`。",
         "- 已删除旧目录：`detectors/`, `state/`, `analysis/` 以及对应旧测试。",
@@ -300,12 +336,13 @@ def render_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) 
         "- `executed_action == raw_action`，日志中 `action_changed_count=0`。",
         "- `shadow_state` 只包含 `attributes` 和 `actions` 两张表。",
         "- `repair_placeholder.enabled=false`，没有触发修复、阻断、回滚或 action 改写。",
+        "- active 逻辑中没有 hidden_state_update、selected_option 或 effect.selected_option。",
         "",
         "## action_record 示例",
         "",
     ]
-    for idx, record in enumerate(examples, start=1):
-        lines.append(f"### 示例 {idx}")
+    for title, record in examples:
+        lines.append(f"### {title}")
         lines.append("")
         lines.append("```json")
         lines.append(json.dumps(record, ensure_ascii=False, indent=2)[:3000])
@@ -314,14 +351,32 @@ def render_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) 
     return "\n".join(lines)
 
 
-def _example_records(trajectories: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
-    records = []
+def _example_records(trajectories: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
+    examples: list[tuple[str, dict[str, Any]]] = []
+    seen_titles: set[str] = set()
     for trajectory in trajectories:
         for step in trajectory.get("steps", []):
-            records.append(step["action_record"])
-            if len(records) >= limit:
-                return records
-    return records
+            record = step["action_record"]
+            post = record.get("post_check", {})
+            title = ""
+            if post.get("visible_delta") is False and post.get("no_progress") is False:
+                title = "visible_delta=False 但 no_progress=False"
+            elif (
+                post.get("no_progress_reason")
+                == "same_action_repeated_without_visible_delta"
+            ):
+                title = "same_action_repeated_without_visible_delta"
+            elif (
+                post.get("no_progress_reason")
+                == "context_cycle_without_visible_delta"
+            ):
+                title = "context_cycle_without_visible_delta"
+            if title and title not in seen_titles:
+                examples.append((title, record))
+                seen_titles.add(title)
+            if len(examples) >= 3:
+                return examples
+    return examples
 
 
 def _build_client(model: str):

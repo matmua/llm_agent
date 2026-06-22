@@ -60,22 +60,90 @@ def test_pre_only_detects_format_and_repeated_no_info():
         {
             "context_before": "ctx_a",
             "action_signature": action_signature(parsed),
-            "post_check": {"info_gain": False},
+            "post_check": {"visible_delta": False, "info_gain": False},
+        }
+    )
+    assert run_pre_check(record, state)["repeat_known_no_info"] is False
+    state["actions"].append(
+        {
+            "context_before": "ctx_a",
+            "action_signature": action_signature(parsed),
+            "post_check": {"visible_delta": False, "info_gain": False},
         }
     )
     assert run_pre_check(record, state)["repeat_known_no_info"] is True
 
 
-def test_post_only_detects_new_attribute_values():
+def test_post_separates_visible_delta_from_no_progress():
+    state = new_shadow_state()
     before = extract_observation_attributes("Search page", {"clickables": ["search"]}, step=0)
+    merge_attributes(state, before)
     after = extract_observation_attributes(
         "Search results [SEP] B08K7LDM7Q [SEP] Good Pillow [SEP] $29.99",
         {"clickables": ["B08K7LDM7Q"]},
         step=1,
     )
-    post = run_post_check(before, after, after["context.current"]["current_value"])
+    parsed = parse_action("search[pillow]")
+    record = {
+        "context_before": "ctx_a",
+        "action_signature": action_signature(parsed),
+    }
+    post = run_post_check(before, after, record, state, after["context.current"]["current_value"])
     assert post["info_gain"] is True
+    assert post["visible_delta"] is True
+    assert post["no_progress"] is False
+    assert post["same_action_no_visible_delta_count"] == 0
     assert any(item["key"] == "entity.b08k7ldm7q" for item in post["new_attrs"])
+
+    no_delta = run_post_check(before, before, record, state, before["context.current"]["current_value"])
+    assert no_delta["visible_delta"] is False
+    assert no_delta["no_progress"] is False
+    assert no_delta["same_action_no_visible_delta_count"] == 1
+
+
+def test_post_marks_third_same_action_without_visible_delta_as_no_progress():
+    state = new_shadow_state()
+    attrs = extract_observation_attributes("Same page", {"clickables": ["next >"]}, step=0)
+    parsed = parse_action("click[next >]")
+    record = {
+        "context_before": "ctx_a",
+        "action_signature": action_signature(parsed),
+    }
+    for _ in range(2):
+        state["actions"].append(
+            {
+                "context_before": "ctx_a",
+                "action_signature": action_signature(parsed),
+                "post_check": {"visible_delta": False, "info_gain": False, "context_after": "ctx_a"},
+            }
+        )
+    post = run_post_check(attrs, attrs, record, state, attrs["context.current"]["current_value"])
+    assert post["visible_delta"] is False
+    assert post["same_action_no_visible_delta_count"] == 3
+    assert post["no_progress"] is True
+    assert post["no_progress_reason"] == "same_action_repeated_without_visible_delta"
+
+
+def test_post_detects_context_cycle_without_visible_delta():
+    state = new_shadow_state()
+    attrs = extract_observation_attributes("Same page", {"clickables": ["toggle"]}, step=0)
+    parsed = parse_action("click[toggle]")
+    record = {
+        "context_before": "ctx_a",
+        "action_signature": action_signature(parsed),
+    }
+    for context in ["ctx_a", "ctx_b", "ctx_a"]:
+        state["actions"].append(
+            {
+                "context_before": "other",
+                "action_signature": "other",
+                "post_check": {"visible_delta": False, "info_gain": False, "context_after": context},
+            }
+        )
+    post = run_post_check(attrs, attrs, record, state, "ctx_b")
+    assert post["context_cycle_detected"] is True
+    assert post["no_progress"] is True
+    assert post["no_progress_reason"] == "context_cycle_without_visible_delta"
 
 
 def test_repair_placeholder_is_noop():
@@ -117,4 +185,16 @@ def test_mock_runner_keeps_state_out_of_agent_and_actions_unchanged(tmp_path):
             record = step["action_record"]
             assert record["executed_action"] == record["raw"]
             assert set(record["pre_check"]) == {"format_valid", "repeat_known_no_info"}
-            assert set(record["post_check"]) == {"info_gain", "new_attrs", "context_after"}
+            assert set(record["post_check"]) == {
+                "visible_delta",
+                "info_gain",
+                "new_attrs",
+                "same_action_no_visible_delta_count",
+                "context_cycle_detected",
+                "no_progress",
+                "no_progress_reason",
+                "context_before",
+                "context_after",
+                "context_changed",
+                "new_context",
+            }
