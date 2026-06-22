@@ -16,6 +16,11 @@ def main() -> None:
     args = parse_args()
     trajectories = load_trajectories(Path(args.trajectories))
     report = analyze(trajectories)
+    report["artifact_paths"] = {
+        "trajectories": args.trajectories,
+        "output_dir": args.output_dir,
+        "state_snapshots": args.state_snapshots,
+    }
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     write_json(out_dir / "pre_post_diagnostics.json", report)
@@ -67,7 +72,7 @@ def analyze(trajectories: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def analyze_sample(trajectory: dict[str, Any]) -> dict[str, Any]:
-    seen_no_info: set[tuple[str, str]] = set()
+    no_info_counts: dict[tuple[str, str], int] = {}
     steps = []
     for step in trajectory.get("steps", []):
         action_record = step["action_record"]
@@ -83,7 +88,7 @@ def analyze_sample(trajectory: dict[str, Any]) -> dict[str, Any]:
         observable_no_effect = same_context and not done and reward == 0.0
         visible_or_terminal_effect = not observable_no_effect
         predicted_no_effect = not info_gain
-        expected_repeat_rule = (context_before, signature) in seen_no_info
+        expected_repeat_rule = no_info_counts.get((context_before, signature), 0) >= 2
         repeat_flag = bool(pre.get("repeat_known_no_info"))
         format_valid = bool(pre.get("format_valid"))
         parsed_format_valid = bool((action_record.get("parsed_action") or {}).get("format_valid"))
@@ -147,7 +152,8 @@ def analyze_sample(trajectory: dict[str, Any]) -> dict[str, Any]:
         }
         steps.append(step_diag)
         if not info_gain:
-            seen_no_info.add((context_before, signature))
+            key = (context_before, signature)
+            no_info_counts[key] = no_info_counts.get(key, 0) + 1
     counts = summarize_step_counts(steps)
     return {
         "task_id": trajectory.get("task_id"),
@@ -255,7 +261,7 @@ def summarize_step_counts(steps: list[dict[str, Any]]) -> dict[str, int]:
 def definitions() -> dict[str, str]:
     return {
         "format_accuracy": "pre.format_valid compared with the parser result. This has a real mechanical label.",
-        "pre_repeat_strict_accuracy": "pre.repeat_known_no_info compared with the exact rule: same context and same action signature previously had post.info_gain=false.",
+        "pre_repeat_strict_accuracy": "pre.repeat_known_no_info compared with the exact rule: the same context and same action signature already had two previous post.info_gain=false outcomes, so the current action would be the third repeated no-info action.",
         "pre_repeat_operational_false_positive": "A repeat warning is counted as operational FP if the flagged action still produced an observable effect: context changed, episode ended, or reward changed.",
         "post_info_gain": "The detector's native target: whether the extractor found a new attribute key or value after the action.",
         "observable_no_effect": "Heuristic audit label: context_before == context_after and done=false and reward=0.",
@@ -322,6 +328,16 @@ def write_state_snapshots(trajectories: list[dict[str, Any]], path: Path) -> Non
 
 def render_markdown(report: dict[str, Any]) -> str:
     overall = report["overall"]
+    artifact_paths = report.get("artifact_paths") or {}
+    trajectories_path = artifact_paths.get(
+        "trajectories",
+        "logs/rule_shadow_v1_webshop20/trajectories.jsonl",
+    )
+    state_snapshots_path = artifact_paths.get(
+        "state_snapshots",
+        "logs/rule_shadow_v1_webshop20/state_snapshots_compact.jsonl",
+    )
+    output_dir = artifact_paths.get("output_dir", "reports/rule_shadow_v1_webshop20")
     lines = [
         "# rule-based shadow v1 pre/post 准确性分析",
         "",
@@ -390,11 +406,11 @@ def render_markdown(report: dict[str, Any]) -> str:
             "",
             "## 文件索引",
             "",
-            "- 完整原始轨迹和最终 shadow_state：`logs/rule_shadow_v1_webshop20/trajectories.jsonl`",
-            "- 紧凑 state snapshot：`logs/rule_shadow_v1_webshop20/state_snapshots_compact.jsonl`",
-            "- 逐 step 诊断 JSONL：`reports/rule_shadow_v1_webshop20/pre_post_step_diagnostics.jsonl`",
-            "- 完整诊断 JSON：`reports/rule_shadow_v1_webshop20/pre_post_diagnostics.json`",
-            "- 本报告：`reports/rule_shadow_v1_webshop20/pre_post_accuracy_zh.md`",
+            f"- 完整原始轨迹和最终 shadow_state：`{trajectories_path}`",
+            f"- 紧凑 state snapshot：`{state_snapshots_path}`",
+            f"- 逐 step 诊断 JSONL：`{output_dir}/pre_post_step_diagnostics.jsonl`",
+            f"- 完整诊断 JSON：`{output_dir}/pre_post_diagnostics.json`",
+            f"- 本报告：`{output_dir}/pre_post_accuracy_zh.md`",
             "",
             "## 读数提醒",
             "",
