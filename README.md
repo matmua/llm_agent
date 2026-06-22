@@ -79,8 +79,18 @@ Mock smoke run:
 ## Outputs
 
 - `logs/rule_shadow_v1_webshop20/trajectories.jsonl`
+- `logs/rule_shadow_v1_webshop20/state_snapshots_compact.jsonl`
 - `reports/rule_shadow_v1_webshop20/metrics.json`
 - `reports/rule_shadow_v1_webshop20/summary_zh.md`
+- `reports/rule_shadow_v1_webshop20/pre_post_accuracy_zh.md`
+- `reports/rule_shadow_v1_webshop20/pre_post_diagnostics.json`
+- `reports/rule_shadow_v1_webshop20/pre_post_step_diagnostics.jsonl`
+
+Offline pre/post audit:
+
+```bash
+./no_proxy_run.sh python -m runners.analyze_rule_shadow_logs
+```
 
 ## Tests
 
