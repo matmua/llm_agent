@@ -178,19 +178,7 @@ class MockLLMClient:
         temperature: float = 0.0,
         max_tokens: int = 512,
     ) -> dict[str, Any]:
-        return {
-            "risk_score": 0.0,
-            "risk_level": "low",
-            "should_block_hypothetical": False,
-            "risk_categories": [],
-            "missing_attributes": [],
-            "unsupported_assumptions": [],
-            "expected_delta": {},
-            "reason": "Mock judge did not add risk.",
-            "hypothetical_completion_action": "",
-            "hypothetical_repair_plan": "",
-            "raw_response": "{}",
-        }
+        return {"raw_response": "{}"}
 
 
 def extract_json(text: str) -> dict[str, Any] | None:

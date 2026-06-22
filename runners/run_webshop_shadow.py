@@ -1,7 +1,7 @@
-"""Run action-centric WebShop shadow detection.
+"""Run rule-based shadow v1 on WebShop.
 
-This runner is intentionally shadow-only: the detector may warn or flag errors,
-but the environment always receives the exact action produced by the agent.
+The runner never injects shadow state into the agent prompt, never blocks or
+rewrites actions, and never performs repair.
 """
 
 from __future__ import annotations
@@ -9,22 +9,35 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import time
 from pathlib import Path
+from statistics import mean
 from typing import Any
 
 from agents.llm_client import MockLLMClient, OpenAIChatClient
 from agents.react_agent import WebShopReactAgent
-from detectors.post_action import PostActionDetector
-from detectors.pre_action import PreActionDetector
 from runners.webshop_env import make_webshop_env
-from state.action_state import ActionCentricState
-from state.llm_state_proposer import LLMStateProposer
+from shadow.extractor import (
+    context_value,
+    extract_observation_attributes,
+    extract_task_attributes,
+)
+from shadow.parser import action_signature, parse_action
+from shadow.post import run_post_check
+from shadow.pre import run_pre_check
+from shadow.repair import propose_repair
+from shadow.state import (
+    attributes_summary,
+    check_params,
+    clone_attributes,
+    current_context,
+    merge_attributes,
+    new_shadow_state,
+)
 
 
 def main() -> None:
     args = parse_args()
-    run_webshop_shadow(args)
+    run(args)
 
 
 def parse_args() -> argparse.Namespace:
@@ -32,104 +45,86 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--env", choices=["auto", "official", "mock"], default="auto")
     parser.add_argument("--webshop_repo", default="external/webshop")
     parser.add_argument("--num_products", type=int, default=1000)
-    parser.add_argument("--num_tasks", type=int, default=20)
+    parser.add_argument("--num_samples", "--num_tasks", dest="num_samples", type=int, default=20)
     parser.add_argument("--start_index", type=int, default=0)
     parser.add_argument("--max_steps", type=int, default=15)
     parser.add_argument("--model", default=os.getenv("LLM_MODEL") or os.getenv("QWEN_MODEL") or "mock")
     parser.add_argument("--state_to_agent", default="false")
-    parser.add_argument("--log_dir", default="logs/webshop_shadow_qwen20_max15")
+    parser.add_argument("--log_dir", default="logs/rule_shadow_v1_webshop20")
+    parser.add_argument("--report_dir", default="reports/rule_shadow_v1_webshop20")
     return parser.parse_args()
 
 
-def run_webshop_shadow(args: argparse.Namespace) -> dict[str, Any]:
-    state_to_agent = parse_bool(args.state_to_agent)
-    if state_to_agent:
-        raise ValueError("This minimal shadow runner requires --state_to_agent false.")
-
-    log_dir = Path(args.log_dir)
-    log_dir.mkdir(parents=True, exist_ok=True)
-    run_id = time.strftime("%Y%m%d_%H%M%S_webshop_shadow")
-
+def run(args: argparse.Namespace) -> dict[str, Any]:
+    if _parse_bool(args.state_to_agent):
+        raise ValueError("rule_shadow_v1 requires --state_to_agent false")
     env = make_webshop_env(args.env, repo_path=args.webshop_repo, num_products=args.num_products)
-    client = build_client(args.model)
-    agent = WebShopReactAgent(client)
-    proposer = LLMStateProposer(client)
-    pre_detector = PreActionDetector()
-    post_detector = PostActionDetector()
+    agent = WebShopReactAgent(_build_client(args.model))
+    log_dir = Path(args.log_dir)
+    report_dir = Path(args.report_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    report_dir.mkdir(parents=True, exist_ok=True)
 
     config = {
-        "run_id": run_id,
-        "runner": "webshop_shadow_action_centric",
-        "shadow": True,
-        "intervention_enabled": False,
+        "mode": "shadow",
+        "version": "rule_shadow_v1",
         "env": env.env_name,
         "requested_env": args.env,
-        "webshop_repo": args.webshop_repo,
-        "num_products": args.num_products,
-        "num_tasks": args.num_tasks,
+        "num_samples": args.num_samples,
         "start_index": args.start_index,
         "max_steps": args.max_steps,
-        "model": getattr(client, "model", args.model),
         "state_to_agent": False,
-        "state_schema": "ActionCentricState",
-        "executed_action_policy": "raw_action_only",
+        "repair_enabled": False,
+        "model": getattr(agent.client, "model", args.model),
     }
-    write_json(log_dir / "config.json", config)
+    _write_json(log_dir / "config.json", config)
 
-    summaries: list[dict[str, Any]] = []
-    with (log_dir / "steps.jsonl").open("w", encoding="utf-8") as step_fh, (
-        log_dir / "episodes.jsonl"
-    ).open("w", encoding="utf-8") as episode_fh, (log_dir / "alert_review.jsonl").open(
-        "w", encoding="utf-8"
-    ) as alert_fh:
-        for offset in range(args.num_tasks):
+    trajectories = []
+    with (log_dir / "trajectories.jsonl").open("w", encoding="utf-8") as fh:
+        for offset in range(args.num_samples):
             task_id = args.start_index + offset
-            summary, alerts = run_episode(
-                run_id=run_id,
-                task_id=task_id,
+            trajectory = _run_episode(
                 env=env,
                 agent=agent,
-                proposer=proposer,
-                pre_detector=pre_detector,
-                post_detector=post_detector,
+                task_id=task_id,
                 max_steps=args.max_steps,
-                step_fh=step_fh,
             )
-            summaries.append(summary)
-            episode_fh.write(json.dumps(summary, ensure_ascii=True) + "\n")
-            episode_fh.flush()
-            for alert in alerts:
-                alert["final_success"] = summary["success"]
-                alert["final_reward"] = summary["final_reward"]
-                alert_fh.write(json.dumps(alert, ensure_ascii=True) + "\n")
-            alert_fh.flush()
+            trajectories.append(trajectory)
+            fh.write(json.dumps(trajectory, ensure_ascii=True) + "\n")
+            fh.flush()
 
-    return {"config": config, "episodes": summaries}
+    metrics = compute_metrics(trajectories, args.max_steps)
+    _write_json(report_dir / "metrics.json", metrics)
+    (report_dir / "summary_zh.md").write_text(
+        render_summary(metrics, trajectories),
+        encoding="utf-8",
+    )
+    return {"config": config, "metrics": metrics, "trajectories": trajectories}
 
 
-def run_episode(
-    run_id: str,
-    task_id: int,
+def _run_episode(
     env: Any,
     agent: WebShopReactAgent,
-    proposer: LLMStateProposer,
-    pre_detector: PreActionDetector,
-    post_detector: PostActionDetector,
+    task_id: int,
     max_steps: int,
-    step_fh: Any,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+) -> dict[str, Any]:
     observation = env.reset(task_id)
     instruction = env.get_instruction_text()
+    available = env.get_available_actions()
+    shadow_state = new_shadow_state()
+    merge_attributes(shadow_state, extract_task_attributes(instruction, step=0))
+    merge_attributes(
+        shadow_state,
+        extract_observation_attributes(observation, available, step=0),
+    )
     history: list[dict[str, Any]] = []
-    previous_pre_reports: list[dict[str, Any]] = []
-    step_logs: list[dict[str, Any]] = []
-    alerts: list[dict[str, Any]] = []
-    previous_state: ActionCentricState | None = None
-    final_reward = 0.0
+    steps: list[dict[str, Any]] = []
     done = False
+    final_reward = 0.0
 
-    for step_id in range(max_steps):
+    for step in range(max_steps):
         available_before = env.get_available_actions()
+        context_before = current_context(shadow_state) or context_value(observation)
         raw_action = agent.act(
             task_instruction=instruction,
             observation=observation,
@@ -137,199 +132,210 @@ def run_episode(
             available_actions=available_before,
             state_summary="",
         )
-        agent_trace = dict(agent.last_trace)
-
-        state_before_result = proposer.propose(
-            task_instruction=instruction,
-            observation=observation,
-            available_actions=available_before,
-            raw_action=raw_action,
-            previous_action_state=previous_state,
-            step_id=step_id,
-        )
-        state_before = state_before_result.state
-        pre_report = pre_detector.detect(
-            raw_action=raw_action,
-            available_actions=available_before,
-            state=state_before,
-            previous_reports=previous_pre_reports,
-        )
-
+        parsed = parse_action(raw_action)
+        action_record: dict[str, Any] = {
+            "step": step,
+            "raw": raw_action,
+            "type": parsed["type"],
+            "params": parsed["params"],
+            "parsed_action": parsed,
+            "context_before": context_before,
+            "action_signature": action_signature(parsed),
+            "param_checks": check_params(parsed, shadow_state["attributes"]),
+        }
+        action_record["pre_check"] = run_pre_check(action_record, shadow_state)
+        action_record["repair_placeholder"] = propose_repair(action_record, shadow_state)
         executed_action = raw_action
         assert executed_action == raw_action
-        next_observation, reward, done, info = env.step(executed_action)
-        final_reward = reward
-        available_after = env.get_available_actions()
+        action_record["executed_action"] = executed_action
 
-        state_after_result = proposer.propose(
-            task_instruction=instruction,
-            observation=next_observation,
-            available_actions=available_after,
-            raw_action=raw_action,
-            previous_action_state=state_before,
-            step_id=step_id,
+        attributes_before = clone_attributes(shadow_state)
+        observation_after, reward, done, info = env.step(executed_action)
+        final_reward = float(reward)
+        available_after = env.get_available_actions()
+        observed_after = extract_observation_attributes(observation_after, available_after, step=step + 1)
+        post_check = run_post_check(
+            attributes_before=attributes_before,
+            observed_attrs_after=observed_after,
+            context_after=str(observed_after["context.current"]["current_value"]),
         )
-        state_after = state_after_result.state
-        post_report = post_detector.detect(
-            state_before=state_before,
-            raw_action=raw_action,
-            observation_before=observation,
-            observation_after=next_observation,
-            state_after=state_after,
-            pre_report=pre_report.to_dict(),
-            reward=reward,
-            done=done,
-            previous_step_logs=step_logs,
-            before_available=available_before,
-            after_available=available_after,
-            episode_ending=done or step_id == max_steps - 1,
-        )
-        state_after.post_check = post_report.to_post_check()
+        action_record["post_check"] = post_check
+        merge_attributes(shadow_state, observed_after)
+        shadow_state["actions"].append(action_record)
 
         step_log = {
-            "run_id": run_id,
-            "task_id": task_id,
-            "step_id": step_id,
-            "task_instruction": instruction,
+            "step": step,
             "state_to_agent": False,
-            "agent_prompt_contains_state_summary": bool(agent_trace.get("prompt_contains_state_summary")),
+            "agent_prompt_contains_state_summary": bool(
+                agent.last_trace.get("prompt_contains_state_summary")
+            ),
+            "observation_before_hash": context_before,
             "observation_before": observation,
-            "available_actions_before": available_before,
             "raw_action": raw_action,
-            "executed_action": executed_action,
-            "action_changed": False,
-            "state_before": state_before.to_dict(),
-            "state_before_metadata": state_metadata(state_before_result),
-            "pre_report": pre_report.to_dict(),
-            "observation_after": next_observation,
-            "available_actions_after": available_after,
-            "state_after": state_after.to_dict(),
-            "state_after_metadata": state_metadata(state_after_result),
-            "post_report": post_report.to_dict(),
-            "reward": reward,
+            "parsed_action": parsed,
+            "action_record": action_record,
+            "observation_after_hash": post_check["context_after"],
+            "observation_after": observation_after,
+            "reward": final_reward,
             "done": done,
             "env_info": info,
-            "agent_trace": agent_trace,
+            "attributes_summary": attributes_summary(shadow_state),
         }
-        step_fh.write(json.dumps(step_log, ensure_ascii=True) + "\n")
-        step_fh.flush()
-        step_logs.append(step_log)
-        previous_pre_reports.append(pre_report.to_dict())
-        alerts.extend(alert_rows(step_log))
-
+        steps.append(step_log)
         history.append(
             {
-                "step_id": step_id,
+                "step": step,
                 "raw_action": raw_action,
                 "executed_action": executed_action,
-                "reward": reward,
+                "reward": final_reward,
                 "done": done,
             }
         )
-        previous_state = state_after
-        observation = next_observation
+        observation = observation_after
         if done:
             break
 
-    summary = summarize_episode(run_id, task_id, instruction, step_logs, final_reward, done, max_steps)
-    return summary, alerts
+    return {
+        "task_id": task_id,
+        "task_instruction": instruction,
+        "success": bool(done and final_reward > 0),
+        "reward": final_reward,
+        "done": done,
+        "num_steps": len(steps),
+        "max_steps": max_steps,
+        "shadow_state": shadow_state,
+        "steps": steps,
+    }
 
 
-def build_client(model: str):
+def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[str, Any]:
+    action_records = [
+        step["action_record"]
+        for trajectory in trajectories
+        for step in trajectory.get("steps", [])
+    ]
+    param_checks = [
+        check
+        for record in action_records
+        for check in (record.get("param_checks") or {}).values()
+    ]
+    success_count = sum(1 for item in trajectories if item.get("success"))
+    num_samples = len(trajectories)
+    return {
+        "num_samples": num_samples,
+        "max_steps": max_steps,
+        "state_to_agent": False,
+        "repair_enabled": False,
+        "num_actions": len(action_records),
+        "format_invalid_count": sum(
+            1 for item in action_records if not item.get("pre_check", {}).get("format_valid")
+        ),
+        "repeat_known_no_info_count": sum(
+            1 for item in action_records if item.get("pre_check", {}).get("repeat_known_no_info")
+        ),
+        "info_gain_true_count": sum(
+            1 for item in action_records if item.get("post_check", {}).get("info_gain")
+        ),
+        "info_gain_false_count": sum(
+            1 for item in action_records if not item.get("post_check", {}).get("info_gain")
+        ),
+        "param_known_count": sum(1 for item in param_checks if item.get("known")),
+        "param_unknown_count": sum(1 for item in param_checks if not item.get("known")),
+        "success_count": success_count,
+        "success_rate": float(success_count / num_samples) if num_samples else 0.0,
+        "avg_reward": float(mean([item.get("reward", 0.0) for item in trajectories])) if trajectories else 0.0,
+        "avg_steps": float(mean([item.get("num_steps", 0) for item in trajectories])) if trajectories else 0.0,
+        "state_prompt_leak_count": sum(
+            1
+            for trajectory in trajectories
+            for step in trajectory.get("steps", [])
+            if step.get("agent_prompt_contains_state_summary")
+        ),
+        "action_changed_count": sum(
+            1
+            for item in action_records
+            if item.get("executed_action") != item.get("raw")
+        ),
+    }
+
+
+def render_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) -> str:
+    examples = _example_records(trajectories, limit=3)
+    lines = [
+        "# rule-based shadow v1 WebShop20 报告",
+        "",
+        "本次实现是 rule-based shadow v1：只维护 attributes 表和 actions 表。",
+        "",
+        "- 没有使用 LLM detector。",
+        "- 没有使用 LLM state proposer。",
+        "- 没有把 shadow state 注入 agent prompt。",
+        "- 没有执行修复、阻断、回滚或 action 改写。",
+        "- pre 只检测格式是否合法、是否重复执行已知 no-info action。",
+        "- post 只检测 action 后是否出现新的 attribute value。",
+        "",
+        "## 统计结果",
+        "",
+        f"- 样本数：{metrics['num_samples']}",
+        f"- 最大步数：{metrics['max_steps']}",
+        f"- action 数：{metrics['num_actions']}",
+        f"- success：{metrics['success_count']} / {metrics['num_samples']} = {metrics['success_rate']:.4f}",
+        f"- 平均 reward：{metrics['avg_reward']:.4f}",
+        f"- 平均步数：{metrics['avg_steps']:.2f}",
+        f"- format_invalid_count：{metrics['format_invalid_count']}",
+        f"- repeat_known_no_info_count：{metrics['repeat_known_no_info_count']}",
+        f"- info_gain_true_count：{metrics['info_gain_true_count']}",
+        f"- info_gain_false_count：{metrics['info_gain_false_count']}",
+        f"- param_known_count：{metrics['param_known_count']}",
+        f"- param_unknown_count：{metrics['param_unknown_count']}",
+        f"- state_prompt_leak_count：{metrics['state_prompt_leak_count']}",
+        f"- action_changed_count：{metrics['action_changed_count']}",
+        "",
+        "## 最终检查",
+        "",
+        "- 运行命令：`python -m runners.run_webshop_shadow --env official --num_samples 20 --start_index 0 --max_steps 15 --model qwen3-8b --state_to_agent false --log_dir logs/rule_shadow_v1_webshop20 --report_dir reports/rule_shadow_v1_webshop20`",
+        "- 活跃 shadow 入口：`runners/run_webshop_shadow.py`。",
+        "- 活跃 shadow core：`shadow/state.py`, `shadow/parser.py`, `shadow/extractor.py`, `shadow/pre.py`, `shadow/post.py`, `shadow/repair.py`。",
+        "- 已删除旧目录：`detectors/`, `state/`, `analysis/` 以及对应旧测试。",
+        "- `state_to_agent=false`，日志中 `state_prompt_leak_count=0`。",
+        "- `executed_action == raw_action`，日志中 `action_changed_count=0`。",
+        "- `shadow_state` 只包含 `attributes` 和 `actions` 两张表。",
+        "- `repair_placeholder.enabled=false`，没有触发修复、阻断、回滚或 action 改写。",
+        "",
+        "## action_record 示例",
+        "",
+    ]
+    for idx, record in enumerate(examples, start=1):
+        lines.append(f"### 示例 {idx}")
+        lines.append("")
+        lines.append("```json")
+        lines.append(json.dumps(record, ensure_ascii=False, indent=2)[:3000])
+        lines.append("```")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _example_records(trajectories: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    records = []
+    for trajectory in trajectories:
+        for step in trajectory.get("steps", []):
+            records.append(step["action_record"])
+            if len(records) >= limit:
+                return records
+    return records
+
+
+def _build_client(model: str):
     if not model or model == "mock":
         return MockLLMClient()
     return OpenAIChatClient.from_env(model=model)
 
 
-def state_metadata(result: Any) -> dict[str, Any]:
-    return {
-        "raw_response": getattr(result, "raw_response", "")[:4000],
-        "parse_error": getattr(result, "parse_error", ""),
-        "request_error": getattr(result, "request_error", ""),
-        "fallback_used": bool(getattr(result, "fallback_used", False)),
-    }
+def _parse_bool(value: Any) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
 
 
-def alert_rows(step_log: dict[str, Any]) -> list[dict[str, Any]]:
-    rows = []
-    pre = step_log["pre_report"]
-    post = step_log["post_report"]
-    if pre.get("pre_warning") or pre.get("pre_error") or pre.get("repair_trigger"):
-        rows.append(
-            {
-                "task_id": step_log["task_id"],
-                "step_id": step_log["step_id"],
-                "phase": "pre",
-                "severity": "error" if pre.get("pre_error") else "warning",
-                "categories": pre.get("categories", []),
-                "raw_action": step_log["raw_action"],
-                "reason": pre.get("reason", ""),
-                "requires_manual_review": True,
-            }
-        )
-    if post.get("post_warning") or post.get("post_error") or post.get("repair_trigger"):
-        rows.append(
-            {
-                "task_id": step_log["task_id"],
-                "step_id": step_log["step_id"],
-                "phase": "post",
-                "severity": "error" if post.get("post_error") else "warning",
-                "categories": post.get("categories", []),
-                "raw_action": step_log["raw_action"],
-                "reason": post.get("reason", ""),
-                "requires_manual_review": True,
-            }
-        )
-    return rows
-
-
-def summarize_episode(
-    run_id: str,
-    task_id: int,
-    instruction: str,
-    step_logs: list[dict[str, Any]],
-    final_reward: float,
-    done: bool,
-    max_steps: int,
-) -> dict[str, Any]:
-    pre_warnings = [step for step in step_logs if step["pre_report"].get("pre_warning")]
-    pre_errors = [step for step in step_logs if step["pre_report"].get("pre_error")]
-    post_warnings = [step for step in step_logs if step["post_report"].get("post_warning")]
-    post_errors = [step for step in step_logs if step["post_report"].get("post_error")]
-    return {
-        "run_id": run_id,
-        "task_id": task_id,
-        "task_instruction": instruction,
-        "success": bool(done and final_reward > 0),
-        "done": done,
-        "final_reward": final_reward,
-        "num_steps": len(step_logs),
-        "max_steps": max_steps,
-        "pre_warning_steps": len(pre_warnings),
-        "pre_error_steps": len(pre_errors),
-        "post_warning_steps": len(post_warnings),
-        "post_error_steps": len(post_errors),
-        "first_pre_warning_step": first_step(pre_warnings),
-        "first_pre_error_step": first_step(pre_errors),
-        "first_post_warning_step": first_step(post_warnings),
-        "first_post_error_step": first_step(post_errors),
-        "action_changed_steps": 0,
-        "agent_prompt_contains_state_summary": any(
-            bool(step.get("agent_prompt_contains_state_summary")) for step in step_logs
-        ),
-    }
-
-
-def first_step(steps: list[dict[str, Any]]) -> int | None:
-    return steps[0]["step_id"] if steps else None
-
-
-def write_json(path: Path, data: dict[str, Any]) -> None:
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
-
-
-def parse_bool(value: Any) -> bool:
-    return str(value).strip().lower() in {"true", "1", "yes", "y"}
+def _write_json(path: Path, data: dict[str, Any]) -> None:
+    path.write_text(json.dumps(data, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

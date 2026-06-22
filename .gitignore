@@ -17,11 +17,11 @@ outputs/
 
 # Experiment artifacts: ignore by default, keep the current required run.
 logs/*
-!logs/webshop_shadow_qwen20_max15/
-!logs/webshop_shadow_qwen20_max15/**
+!logs/rule_shadow_v1_webshop20/
+!logs/rule_shadow_v1_webshop20/**
 reports/*
-!reports/webshop_shadow_qwen20_max15/
-!reports/webshop_shadow_qwen20_max15/**
+!reports/rule_shadow_v1_webshop20/
+!reports/rule_shadow_v1_webshop20/**
 
 # Python/cache noise
 __pycache__/

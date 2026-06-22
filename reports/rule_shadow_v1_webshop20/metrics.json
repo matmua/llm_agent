@@ -1,0 +1,19 @@
+{
+  "num_samples": 20,
+  "max_steps": 15,
+  "state_to_agent": false,
+  "repair_enabled": false,
+  "num_actions": 191,
+  "format_invalid_count": 0,
+  "repeat_known_no_info_count": 26,
+  "info_gain_true_count": 124,
+  "info_gain_false_count": 67,
+  "param_known_count": 158,
+  "param_unknown_count": 33,
+  "success_count": 13,
+  "success_rate": 0.65,
+  "avg_reward": 0.3708946608946609,
+  "avg_steps": 9.55,
+  "state_prompt_leak_count": 0,
+  "action_changed_count": 0
+}

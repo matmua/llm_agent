@@ -1,70 +1,51 @@
 # llm_agent
 
-Minimal WebShop shadow-detection project for a Qwen3-8B ReAct agent.
+Minimal rule-based shadow v1 for WebShop agent trajectories.
 
-The current repository is intentionally narrow:
+This version only implements:
 
-- WebShop text environment only.
-- Action-centric state only.
-- Pre-action and post-action shadow detection only.
-- No intervention, repair, rollback, recovery, tau-bench, tau3-bench, or predictor-soft mode.
-- `state_to_agent=false`: detector state is not shown to the agent in the official run.
+- agent loop
+- shadow state table
+- rule-based pre check
+- rule-based post check
 
-## Layout
+It does not implement LLM detectors, LLM state proposal, risk levels, blocking,
+intervention, rollback, recovery, action repair, or state injection into the
+agent prompt.
 
-- `agents/llm_client.py`: OpenAI-compatible client plus deterministic mock client.
-- `agents/react_agent.py`: WebShop ReAct action generator.
-- `detectors/action_parser.py`: `search[...]` / `click[...]` parser.
-- `detectors/pre_action.py`: pre-action warning/error detector.
-- `detectors/post_action.py`: post-action delta detector.
-- `state/action_state.py`: Action-Centric State schema and fallback extraction.
-- `state/llm_state_proposer.py`: optional LLM proposal with fallback state.
+## Active Layout
+
+- `runners/run_webshop_shadow.py`: the only active shadow runner.
+- `shadow/parser.py`: format-only action parser.
+- `shadow/extractor.py`: rule-based attribute extraction.
+- `shadow/state.py`: two-table shadow state helpers.
+- `shadow/pre.py`: format and repeated no-info pre check.
+- `shadow/post.py`: post-action info-gain check.
+- `shadow/repair.py`: no-op repair placeholder.
 - `runners/webshop_env.py`: official/mock WebShop environment adapter.
-- `runners/run_webshop_shadow.py`: shadow-only runner.
-- `analysis/analyze_shadow_logs.py`: metrics and Chinese report generation.
-- `tests/`: unit and smoke tests.
+- `agents/`: ReAct agent and OpenAI-compatible/mock client.
 
-`external/` and `models/` are ignored by git. They are kept locally because the
-official WebShop code/data and Qwen weights are runtime dependencies.
+The active shadow state is only:
+
+```json
+{
+  "attributes": {},
+  "actions": []
+}
+```
 
 ## Network Rule
 
 Run project commands through `./no_proxy_run.sh` so project traffic uses the
-server network and does not inherit local SSH proxy variables:
+server network instead of inherited local proxy variables:
 
 ```bash
 ./no_proxy_run.sh <command>
 ```
 
-## Model Endpoint
+## Run WebShop20
 
-The runner expects an OpenAI-compatible chat endpoint. The local Qwen3-8B vLLM
-endpoint uses these variables:
-
-```bash
-export LLM_API_KEY=EMPTY
-export LLM_BASE_URL=http://127.0.0.1:8000/v1
-export LLM_MODEL=qwen3-8b
-```
-
-`OpenAIChatClient` disables urllib proxy handling internally as an extra guard.
-
-## Run
-
-Mock smoke run:
-
-```bash
-./no_proxy_run.sh python -m runners.run_webshop_shadow \
-  --env mock \
-  --num_tasks 3 \
-  --start_index 0 \
-  --max_steps 6 \
-  --model mock \
-  --state_to_agent false \
-  --log_dir logs/mock_shadow_demo
-```
-
-Official WebShop 20-task run:
+Start a local OpenAI-compatible model endpoint, then run:
 
 ```bash
 ./no_proxy_run.sh bash -lc '
@@ -74,34 +55,32 @@ Official WebShop 20-task run:
   set -a; [ -f .env ] && source .env; set +a
   /root/miniconda3/envs/webshop/bin/python -m runners.run_webshop_shadow \
     --env official \
-    --num_tasks 20 \
+    --num_samples 20 \
     --start_index 0 \
     --max_steps 15 \
     --model "$LLM_MODEL" \
     --state_to_agent false \
-    --log_dir logs/webshop_shadow_qwen20_max15
+    --log_dir logs/rule_shadow_v1_webshop20 \
+    --report_dir reports/rule_shadow_v1_webshop20
 '
 ```
 
-Generate the report:
+Mock smoke run:
 
 ```bash
-./no_proxy_run.sh python -m analysis.analyze_shadow_logs \
-  --log_dir logs/webshop_shadow_qwen20_max15 \
-  --report_dir reports/webshop_shadow_qwen20_max15
+./no_proxy_run.sh python -m runners.run_webshop_shadow \
+  --env mock \
+  --num_samples 2 \
+  --max_steps 5 \
+  --model mock \
+  --state_to_agent false
 ```
 
-## Artifacts
+## Outputs
 
-The committed experiment artifacts are:
-
-- `logs/webshop_shadow_qwen20_max15/config.json`
-- `logs/webshop_shadow_qwen20_max15/steps.jsonl`
-- `logs/webshop_shadow_qwen20_max15/episodes.jsonl`
-- `logs/webshop_shadow_qwen20_max15/alert_review.jsonl`
-- `reports/webshop_shadow_qwen20_max15/metrics.json`
-- `reports/webshop_shadow_qwen20_max15/summary_zh.md`
-- `reports/webshop_shadow_qwen20_max15/case_analysis.jsonl`
+- `logs/rule_shadow_v1_webshop20/trajectories.jsonl`
+- `reports/rule_shadow_v1_webshop20/metrics.json`
+- `reports/rule_shadow_v1_webshop20/summary_zh.md`
 
 ## Tests
 
