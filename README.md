@@ -83,6 +83,7 @@ Mock smoke run:
 - `reports/rule_shadow_v1_webshop20/metrics.json`
 - `reports/rule_shadow_v1_webshop20/summary_zh.md`
 - `reports/rule_shadow_v1_webshop20/pre_post_accuracy_zh.md`
+- `reports/rule_shadow_v1_webshop20/manual_progress_audit_zh.md`
 - `reports/rule_shadow_v1_webshop20/pre_post_diagnostics.json`
 - `reports/rule_shadow_v1_webshop20/pre_post_step_diagnostics.jsonl`
 
