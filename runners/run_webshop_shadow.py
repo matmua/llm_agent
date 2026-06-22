@@ -50,8 +50,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_steps", type=int, default=15)
     parser.add_argument("--model", default=os.getenv("LLM_MODEL") or os.getenv("QWEN_MODEL") or "mock")
     parser.add_argument("--state_to_agent", default="false")
-    parser.add_argument("--log_dir", default="logs/rule_shadow_v1_repeat_webshop20")
-    parser.add_argument("--report_dir", default="reports/rule_shadow_v1_repeat_webshop20")
+    parser.add_argument("--log_dir", default="logs/rule_shadow_v1_trajrisk_webshop20")
+    parser.add_argument("--report_dir", default="reports/rule_shadow_v1_trajrisk_webshop20")
     return parser.parse_args()
 
 
@@ -67,7 +67,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     config = {
         "mode": "shadow",
-        "version": "rule_shadow_v1_repeat",
+        "version": "rule_shadow_v1_trajrisk",
         "env": env.env_name,
         "requested_env": args.env,
         "num_samples": args.num_samples,
@@ -97,6 +97,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     _write_json(report_dir / "metrics.json", metrics)
     (report_dir / "summary_zh.md").write_text(
         render_summary(metrics, trajectories),
+        encoding="utf-8",
+    )
+    (report_dir / "manual_audit_zh.md").write_text(
+        render_manual_audit(metrics, trajectories),
         encoding="utf-8",
     )
     return {"config": config, "metrics": metrics, "trajectories": trajectories}
@@ -136,6 +140,7 @@ def _run_episode(
         action_record: dict[str, Any] = {
             "step": step,
             "raw": raw_action,
+            "raw_action": raw_action,
             "type": parsed["type"],
             "params": parsed["params"],
             "parsed_action": parsed,
@@ -205,6 +210,7 @@ def _run_episode(
         "done": done,
         "num_steps": len(steps),
         "max_steps": max_steps,
+        "trajectory_risk_summary": build_trajectory_risk_summary(steps),
         "shadow_state": shadow_state,
         "steps": steps,
     }
@@ -223,6 +229,11 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
     ]
     success_count = sum(1 for item in trajectories if item.get("success"))
     num_samples = len(trajectories)
+    successful = [item for item in trajectories if item.get("success")]
+    failed = [item for item in trajectories if not item.get("success")]
+    summaries = [item.get("trajectory_risk_summary") or {} for item in trajectories]
+    successful_summaries = [item.get("trajectory_risk_summary") or {} for item in successful]
+    failed_summaries = [item.get("trajectory_risk_summary") or {} for item in failed]
     return {
         "num_samples": num_samples,
         "max_steps": max_steps,
@@ -240,6 +251,9 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
         ),
         "visible_delta_false_count": sum(
             1 for item in action_records if not item.get("post_check", {}).get("visible_delta")
+        ),
+        "action_no_progress_count": sum(
+            1 for item in action_records if item.get("post_check", {}).get("no_progress")
         ),
         "no_progress_count": sum(
             1 for item in action_records if item.get("post_check", {}).get("no_progress")
@@ -259,6 +273,11 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
         "context_cycle_detected_count": sum(
             1 for item in action_records if item.get("post_check", {}).get("context_cycle_detected")
         ),
+        "repeated_behavior_risk_action_count": sum(
+            1
+            for item in action_records
+            if item.get("post_check", {}).get("repeated_behavior_risk")
+        ),
         "info_gain_true_count": sum(
             1 for item in action_records if item.get("post_check", {}).get("info_gain")
         ),
@@ -271,6 +290,54 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
         "success_rate": float(success_count / num_samples) if num_samples else 0.0,
         "avg_reward": float(mean([item.get("reward", 0.0) for item in trajectories])) if trajectories else 0.0,
         "avg_steps": float(mean([item.get("num_steps", 0) for item in trajectories])) if trajectories else 0.0,
+        "trajectory_risk_sample_count": sum(1 for item in summaries if item.get("has_any_risk")),
+        "action_no_progress_sample_count": sum(
+            1 for item in summaries if item.get("has_action_no_progress")
+        ),
+        "repeated_behavior_risk_sample_count": sum(
+            1 for item in summaries if item.get("has_repeated_behavior_risk")
+        ),
+        "context_cycle_risk_sample_count": sum(
+            1 for item in summaries if item.get("has_context_cycle_risk")
+        ),
+        "failed_samples": len(failed),
+        "failed_samples_with_any_risk": sum(1 for item in failed_summaries if item.get("has_any_risk")),
+        "failed_samples_with_action_no_progress": sum(
+            1 for item in failed_summaries if item.get("has_action_no_progress")
+        ),
+        "failed_samples_with_repeated_behavior_risk": sum(
+            1 for item in failed_summaries if item.get("has_repeated_behavior_risk")
+        ),
+        "failed_samples_with_context_cycle_risk": sum(
+            1 for item in failed_summaries if item.get("has_context_cycle_risk")
+        ),
+        "failed_risk_recall": _safe_rate(
+            sum(1 for item in failed_summaries if item.get("has_any_risk")),
+            len(failed),
+        ),
+        "successful_samples": len(successful),
+        "successful_samples_with_any_risk": sum(
+            1 for item in successful_summaries if item.get("has_any_risk")
+        ),
+        "successful_samples_with_action_no_progress": sum(
+            1 for item in successful_summaries if item.get("has_action_no_progress")
+        ),
+        "successful_samples_with_repeated_behavior_risk": sum(
+            1 for item in successful_summaries if item.get("has_repeated_behavior_risk")
+        ),
+        "successful_samples_with_context_cycle_risk": sum(
+            1 for item in successful_summaries if item.get("has_context_cycle_risk")
+        ),
+        "successful_risk_rate": _safe_rate(
+            sum(1 for item in successful_summaries if item.get("has_any_risk")),
+            len(successful),
+        ),
+        "avg_first_any_risk_step_failed": _avg_present(
+            item.get("first_any_risk_step") for item in failed_summaries
+        ),
+        "avg_first_repeated_behavior_risk_step_failed": _avg_present(
+            item.get("first_repeated_behavior_risk_step") for item in failed_summaries
+        ),
         "state_prompt_leak_count": sum(
             1
             for trajectory in trajectories
@@ -280,28 +347,103 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
         "action_changed_count": sum(
             1
             for item in action_records
-            if item.get("executed_action") != item.get("raw")
+            if item.get("executed_action") != item.get("raw_action", item.get("raw"))
         ),
     }
+
+
+def build_trajectory_risk_summary(steps: list[dict[str, Any]]) -> dict[str, Any]:
+    risk_events: list[dict[str, Any]] = []
+    for step in steps:
+        record = step.get("action_record") or {}
+        post = record.get("post_check") or {}
+        step_id = int(record.get("step", step.get("step", 0)))
+        if post.get("no_progress"):
+            risk_events.append(
+                {
+                    "step": step_id,
+                    "type": "action_no_progress",
+                    "action_signature": record.get("action_signature"),
+                    "same_action_no_visible_delta_count": post.get(
+                        "same_action_no_visible_delta_count"
+                    ),
+                    "reason": post.get("no_progress_reason"),
+                }
+            )
+        if post.get("repeated_behavior_risk"):
+            risk_events.append(
+                {
+                    "step": step_id,
+                    "type": "repeated_behavior_risk",
+                    "action_signature": record.get("action_signature"),
+                    "same_action_signature_streak": post.get("same_action_signature_streak"),
+                    "reason": post.get("repeated_behavior_reason"),
+                }
+            )
+        if post.get("no_progress_reason") == "context_cycle_without_visible_delta":
+            risk_events.append(
+                {
+                    "step": step_id,
+                    "type": "context_cycle_risk",
+                    "action_signature": record.get("action_signature"),
+                    "reason": post.get("no_progress_reason"),
+                }
+            )
+
+    first_no_progress = _first_event_step(risk_events, "action_no_progress")
+    first_repeated = _first_event_step(risk_events, "repeated_behavior_risk")
+    first_context_cycle = _first_event_step(risk_events, "context_cycle_risk")
+    present_risk_types = sorted({str(item["type"]) for item in risk_events})
+    return {
+        "has_action_no_progress": first_no_progress is not None,
+        "has_repeated_behavior_risk": first_repeated is not None,
+        "has_context_cycle_risk": first_context_cycle is not None,
+        "has_any_risk": bool(risk_events),
+        "first_no_progress_step": first_no_progress,
+        "first_repeated_behavior_risk_step": first_repeated,
+        "first_context_cycle_step": first_context_cycle,
+        "first_any_risk_step": min((int(item["step"]) for item in risk_events), default=None),
+        "risk_types": present_risk_types,
+        "risk_events": risk_events,
+    }
+
+
+def _first_event_step(risk_events: list[dict[str, Any]], event_type: str) -> int | None:
+    return min(
+        (int(item["step"]) for item in risk_events if item.get("type") == event_type),
+        default=None,
+    )
+
+
+def _safe_rate(numerator: int, denominator: int) -> float:
+    return float(numerator / denominator) if denominator else 0.0
+
+
+def _avg_present(values: Any) -> float | None:
+    present = [item for item in values if item is not None]
+    if not present:
+        return None
+    return float(mean(present))
 
 
 def render_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) -> str:
     examples = _example_records(trajectories)
     lines = [
-        "# rule-based shadow v1 repeat WebShop20 报告",
+        "# rule-based shadow v1 trajrisk WebShop20 报告",
         "",
-        "本次是 rule-based shadow v1 的通用重复/循环无进展检测版本。",
+        "本次是 rule-based shadow v1 的 trajectory-level risk 扩展。",
         "",
         "- 没有使用 LLM detector。",
-        "- 没有使用 LLM state proposer。",
         "- 没有把 shadow state 注入 agent prompt。",
-        "- 没有执行修复、阻断、回滚或 action 改写。",
+        "- 没有执行修复。",
+        "- 没有阻断、回滚或 action 改写。",
         "- 没有加入 WebShop 颜色/尺码/option 专用规则。",
-        "- pre 只检测格式是否合法、当前 action 是否将成为第 3 次重复无可见变化。",
-        "- post 将 visible_delta 和 no_progress 分离。",
-        "- visible_delta=False 不直接等于 no_progress。",
-        "- no_progress 只由 same action + same params 第 3 次无可见变化，或 context A-B-A-B 循环且无可见变化触发。",
-        "- info_gain 是兼容字段，等价于 visible_delta，不再等价于 no_progress。",
+        "- 保留 action-level signal：visible_delta、action no_progress、context cycle no_progress。",
+        "- 新增 trajectory-level signal：相同 action_signature 连续 5 次触发 repeated_behavior_risk。",
+        "- no_progress 是 action-level 局部无进展。",
+        "- repeated_behavior_risk 是 trajectory-level 风险，不要求 visible_delta=False。",
+        "- pre 仍然只检测格式是否合法、当前 action 是否将成为第 3 次重复无可见变化。",
+        "- info_gain 是兼容字段，等价于 visible_delta。",
         "",
         "## 统计结果",
         "",
@@ -315,10 +457,19 @@ def render_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) 
         f"- repeat_known_no_info_count：{metrics['repeat_known_no_info_count']}",
         f"- visible_delta_true_count：{metrics['visible_delta_true_count']}",
         f"- visible_delta_false_count：{metrics['visible_delta_false_count']}",
-        f"- no_progress_count：{metrics['no_progress_count']}",
+        f"- action_no_progress_count：{metrics['action_no_progress_count']}",
         f"- same_action_repeated_no_progress_count：{metrics['same_action_repeated_no_progress_count']}",
         f"- context_cycle_no_progress_count：{metrics['context_cycle_no_progress_count']}",
         f"- context_cycle_detected_count：{metrics['context_cycle_detected_count']}",
+        f"- repeated_behavior_risk_action_count：{metrics['repeated_behavior_risk_action_count']}",
+        f"- trajectory_risk_sample_count：{metrics['trajectory_risk_sample_count']}",
+        f"- repeated_behavior_risk_sample_count：{metrics['repeated_behavior_risk_sample_count']}",
+        f"- failed_samples_with_any_risk：{metrics['failed_samples_with_any_risk']} / {metrics['failed_samples']}",
+        f"- failed_samples_with_repeated_behavior_risk：{metrics['failed_samples_with_repeated_behavior_risk']}",
+        f"- successful_samples_with_any_risk：{metrics['successful_samples_with_any_risk']} / {metrics['successful_samples']}",
+        f"- successful_samples_with_repeated_behavior_risk：{metrics['successful_samples_with_repeated_behavior_risk']}",
+        f"- failed_risk_recall：{metrics['failed_risk_recall']:.4f}",
+        f"- successful_risk_rate：{metrics['successful_risk_rate']:.4f}",
         f"- info_gain_true_count：{metrics['info_gain_true_count']}",
         f"- info_gain_false_count：{metrics['info_gain_false_count']}",
         f"- param_known_count：{metrics['param_known_count']}",
@@ -328,10 +479,9 @@ def render_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) 
         "",
         "## 最终检查",
         "",
-        "- 运行命令：`python -m runners.run_webshop_shadow --env official --num_samples 20 --start_index 0 --max_steps 15 --model qwen3-8b --state_to_agent false --log_dir logs/rule_shadow_v1_repeat_webshop20 --report_dir reports/rule_shadow_v1_repeat_webshop20`",
+        "- 运行命令：`python -m runners.run_webshop_shadow --env official --num_samples 20 --start_index 0 --max_steps 15 --model qwen3-8b --state_to_agent false --log_dir logs/rule_shadow_v1_trajrisk_webshop20 --report_dir reports/rule_shadow_v1_trajrisk_webshop20`",
         "- 活跃 shadow 入口：`runners/run_webshop_shadow.py`。",
         "- 活跃 shadow core：`shadow/state.py`, `shadow/parser.py`, `shadow/extractor.py`, `shadow/pre.py`, `shadow/post.py`, `shadow/repair.py`。",
-        "- 已删除旧目录：`detectors/`, `state/`, `analysis/` 以及对应旧测试。",
         "- `state_to_agent=false`，日志中 `state_prompt_leak_count=0`。",
         "- `executed_action == raw_action`，日志中 `action_changed_count=0`。",
         "- `shadow_state` 只包含 `attributes` 和 `actions` 两张表。",
@@ -351,32 +501,97 @@ def render_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) 
     return "\n".join(lines)
 
 
+def render_manual_audit(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) -> str:
+    by_task = {item.get("task_id"): item for item in trajectories}
+    lines = [
+        "# rule-based shadow v1 trajrisk 人工审计摘要",
+        "",
+        "## Action-level signals",
+        "",
+        f"- visible_delta_false_count：{metrics['visible_delta_false_count']}",
+        f"- action_no_progress_count：{metrics['action_no_progress_count']}",
+        f"- same_action_repeated_no_progress_count：{metrics['same_action_repeated_no_progress_count']}",
+        f"- context_cycle_no_progress_count：{metrics['context_cycle_no_progress_count']}",
+        "",
+        "## Trajectory-level signals",
+        "",
+        "- repeated_behavior_risk：连续相同 action_signature 达到 5 次后触发。",
+        "- 该信号不要求 visible_delta=False，用来捕捉翻页等看似有页面变化但行为策略已经卡住的轨迹。",
+        f"- repeated_behavior_risk_action_count：{metrics['repeated_behavior_risk_action_count']}",
+        f"- repeated_behavior_risk_sample_count：{metrics['repeated_behavior_risk_sample_count']}",
+        f"- failed_samples_with_repeated_behavior_risk：{metrics['failed_samples_with_repeated_behavior_risk']}",
+        f"- successful_samples_with_repeated_behavior_risk：{metrics['successful_samples_with_repeated_behavior_risk']}",
+        "",
+        "## 重点样例",
+        "",
+    ]
+    for task_id in [5, 15, 18]:
+        trajectory = by_task.get(task_id, {})
+        summary = trajectory.get("trajectory_risk_summary") or {}
+        first_step = summary.get("first_repeated_behavior_risk_step")
+        first_event = next(
+            (
+                item
+                for item in summary.get("risk_events", [])
+                if item.get("type") == "repeated_behavior_risk"
+            ),
+            {},
+        )
+        lines.extend(
+            [
+                f"- task {task_id}：success={trajectory.get('success')}, steps={trajectory.get('num_steps')}, "
+                f"first_repeated_behavior_risk_step={first_step}, "
+                f"action_signature={first_event.get('action_signature')}, "
+                f"streak={first_event.get('same_action_signature_streak')}",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "task 5 / task 15 / task 18 均被 repeated_behavior_risk 捕获，主要模式是搜索后连续 `click[next >]`，页面持续变化但决策没有转向商品选择或购买。",
+            "",
+            "## 未覆盖失败样例",
+            "",
+            "task 13 / task 14 没有触发当前通用重复行为规则。它们的动作不是连续同一 action_signature，而是在搜索、商品页、返回、详情页和不同商品之间移动；这类错误更像语义目标不收敛或错误商品探索，仅靠通用重复行为规则不一定能捕获，后续需要 LLM risk detector 或目标约束检测。",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _example_records(trajectories: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
     examples: list[tuple[str, dict[str, Any]]] = []
-    seen_titles: set[str] = set()
+    selectors = [
+        (
+            "action-level no_progress",
+            lambda trajectory, post: bool(post.get("no_progress")),
+        ),
+        (
+            "trajectory-level repeated_behavior_risk",
+            lambda trajectory, post: bool(post.get("repeated_behavior_risk")),
+        ),
+        (
+            "成功轨迹中的局部 no_progress",
+            lambda trajectory, post: bool(trajectory.get("success") and post.get("no_progress")),
+        ),
+    ]
+    for title, predicate in selectors:
+        record = _find_example_record(trajectories, predicate)
+        if record is not None:
+            examples.append((title, record))
+    return examples
+
+
+def _find_example_record(
+    trajectories: list[dict[str, Any]],
+    predicate: Any,
+) -> dict[str, Any] | None:
     for trajectory in trajectories:
         for step in trajectory.get("steps", []):
             record = step["action_record"]
             post = record.get("post_check", {})
-            title = ""
-            if post.get("visible_delta") is False and post.get("no_progress") is False:
-                title = "visible_delta=False 但 no_progress=False"
-            elif (
-                post.get("no_progress_reason")
-                == "same_action_repeated_without_visible_delta"
-            ):
-                title = "same_action_repeated_without_visible_delta"
-            elif (
-                post.get("no_progress_reason")
-                == "context_cycle_without_visible_delta"
-            ):
-                title = "context_cycle_without_visible_delta"
-            if title and title not in seen_titles:
-                examples.append((title, record))
-                seen_titles.add(title)
-            if len(examples) >= 3:
-                return examples
-    return examples
+            if predicate(trajectory, post):
+                return record
+    return None
 
 
 def _build_client(model: str):

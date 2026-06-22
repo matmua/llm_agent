@@ -20,7 +20,7 @@ agent prompt.
 - `shadow/extractor.py`: rule-based attribute extraction.
 - `shadow/state.py`: two-table shadow state helpers.
 - `shadow/pre.py`: format and repeated no-info pre check.
-- `shadow/post.py`: post-action info-gain check.
+- `shadow/post.py`: post-action visible-delta, no-progress, and trajectory-risk checks.
 - `shadow/repair.py`: no-op repair placeholder.
 - `runners/webshop_env.py`: official/mock WebShop environment adapter.
 - `agents/`: ReAct agent and OpenAI-compatible/mock client.
@@ -60,8 +60,8 @@ Start a local OpenAI-compatible model endpoint, then run:
     --max_steps 15 \
     --model "$LLM_MODEL" \
     --state_to_agent false \
-    --log_dir logs/rule_shadow_v1_webshop20 \
-    --report_dir reports/rule_shadow_v1_webshop20
+    --log_dir logs/rule_shadow_v1_trajrisk_webshop20 \
+    --report_dir reports/rule_shadow_v1_trajrisk_webshop20
 '
 ```
 
@@ -78,6 +78,9 @@ Mock smoke run:
 
 ## Outputs
 
+- `logs/rule_shadow_v1_trajrisk_webshop20/trajectories.jsonl`
+- `reports/rule_shadow_v1_trajrisk_webshop20/metrics.json`
+- `reports/rule_shadow_v1_trajrisk_webshop20/summary_zh.md`
 - `logs/rule_shadow_v1_repeat_webshop20/trajectories.jsonl`
 - `reports/rule_shadow_v1_repeat_webshop20/metrics.json`
 - `reports/rule_shadow_v1_repeat_webshop20/summary_zh.md`

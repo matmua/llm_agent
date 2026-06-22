@@ -17,6 +17,11 @@ def run_post_check(
     new_attrs = new_attribute_values(attributes_before, observed_attrs_after)
     visible_delta = bool(new_attrs)
     context_before = str(action_record.get("context_before") or "")
+    signature_streak = same_action_signature_streak(
+        action_record=action_record,
+        shadow_state=shadow_state,
+    )
+    repeated_behavior_risk = signature_streak >= 5
     same_action_count = same_action_no_visible_delta_count(
         action_record=action_record,
         shadow_state=shadow_state,
@@ -42,6 +47,11 @@ def run_post_check(
         "new_attrs": new_attrs,
         "same_action_no_visible_delta_count": same_action_count,
         "context_cycle_detected": context_cycle_detected,
+        "same_action_signature_streak": signature_streak,
+        "repeated_behavior_risk": repeated_behavior_risk,
+        "repeated_behavior_reason": (
+            "same_action_signature_streak" if repeated_behavior_risk else None
+        ),
         "no_progress": no_progress,
         "no_progress_reason": no_progress_reason,
         "context_before": context_before,
@@ -87,6 +97,21 @@ def same_action_no_visible_delta_count(
         if previous_visible_delta is False:
             previous_count += 1
     return previous_count + 1
+
+
+def same_action_signature_streak(
+    action_record: dict[str, Any],
+    shadow_state: dict[str, Any],
+) -> int:
+    signature = action_record.get("action_signature")
+    if not signature:
+        return 1
+    streak = 1
+    for previous in reversed(shadow_state.get("actions", [])):
+        if previous.get("action_signature") != signature:
+            break
+        streak += 1
+    return streak
 
 
 def detect_context_cycle(

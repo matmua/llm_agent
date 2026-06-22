@@ -1,7 +1,7 @@
 import json
 from argparse import Namespace
 
-from runners.run_webshop_shadow import run
+from runners.run_webshop_shadow import build_trajectory_risk_summary, run
 from shadow.extractor import extract_observation_attributes
 from shadow.parser import action_signature, parse_action
 from shadow.post import run_post_check
@@ -93,12 +93,16 @@ def test_post_separates_visible_delta_from_no_progress():
     assert post["visible_delta"] is True
     assert post["no_progress"] is False
     assert post["same_action_no_visible_delta_count"] == 0
+    assert post["same_action_signature_streak"] == 1
+    assert post["repeated_behavior_risk"] is False
+    assert post["repeated_behavior_reason"] is None
     assert any(item["key"] == "entity.b08k7ldm7q" for item in post["new_attrs"])
 
     no_delta = run_post_check(before, before, record, state, before["context.current"]["current_value"])
     assert no_delta["visible_delta"] is False
     assert no_delta["no_progress"] is False
     assert no_delta["same_action_no_visible_delta_count"] == 1
+    assert no_delta["same_action_signature_streak"] == 1
 
 
 def test_post_marks_third_same_action_without_visible_delta_as_no_progress():
@@ -124,6 +128,37 @@ def test_post_marks_third_same_action_without_visible_delta_as_no_progress():
     assert post["no_progress_reason"] == "same_action_repeated_without_visible_delta"
 
 
+def test_post_marks_fifth_consecutive_signature_as_trajectory_risk_even_with_delta():
+    state = new_shadow_state()
+    before = extract_observation_attributes("Search page", {"clickables": ["next >"]}, step=0)
+    after = extract_observation_attributes(
+        "Search results [SEP] B08K7LDM7Q [SEP] Good Pillow [SEP] $29.99",
+        {"clickables": ["next >", "B08K7LDM7Q"]},
+        step=1,
+    )
+    parsed = parse_action("click[next >]")
+    signature = action_signature(parsed)
+    record = {
+        "context_before": "ctx_a",
+        "action_signature": signature,
+    }
+    for _ in range(4):
+        state["actions"].append(
+            {
+                "context_before": "ctx_a",
+                "action_signature": signature,
+                "post_check": {"visible_delta": True, "info_gain": True, "context_after": "ctx_b"},
+            }
+        )
+    post = run_post_check(before, after, record, state, after["context.current"]["current_value"])
+    assert post["visible_delta"] is True
+    assert post["no_progress"] is False
+    assert post["same_action_no_visible_delta_count"] == 0
+    assert post["same_action_signature_streak"] == 5
+    assert post["repeated_behavior_risk"] is True
+    assert post["repeated_behavior_reason"] == "same_action_signature_streak"
+
+
 def test_post_detects_context_cycle_without_visible_delta():
     state = new_shadow_state()
     attrs = extract_observation_attributes("Same page", {"clickables": ["toggle"]}, step=0)
@@ -144,6 +179,48 @@ def test_post_detects_context_cycle_without_visible_delta():
     assert post["context_cycle_detected"] is True
     assert post["no_progress"] is True
     assert post["no_progress_reason"] == "context_cycle_without_visible_delta"
+
+
+def test_trajectory_risk_summary_separates_action_and_trajectory_signals():
+    steps = [
+        {
+            "step": 4,
+            "action_record": {
+                "step": 4,
+                "action_signature": "click|target=next >",
+                "post_check": {
+                    "no_progress": False,
+                    "no_progress_reason": None,
+                    "same_action_signature_streak": 5,
+                    "repeated_behavior_risk": True,
+                    "repeated_behavior_reason": "same_action_signature_streak",
+                },
+            },
+        },
+        {
+            "step": 6,
+            "action_record": {
+                "step": 6,
+                "action_signature": "click|target=toggle",
+                "post_check": {
+                    "no_progress": True,
+                    "no_progress_reason": "context_cycle_without_visible_delta",
+                    "same_action_no_visible_delta_count": 1,
+                    "repeated_behavior_risk": False,
+                    "repeated_behavior_reason": None,
+                },
+            },
+        },
+    ]
+    summary = build_trajectory_risk_summary(steps)
+    assert summary["has_action_no_progress"] is True
+    assert summary["has_repeated_behavior_risk"] is True
+    assert summary["has_context_cycle_risk"] is True
+    assert summary["has_any_risk"] is True
+    assert summary["first_repeated_behavior_risk_step"] == 4
+    assert summary["first_no_progress_step"] == 6
+    assert summary["first_context_cycle_step"] == 6
+    assert summary["first_any_risk_step"] == 4
 
 
 def test_repair_placeholder_is_noop():
@@ -174,16 +251,20 @@ def test_mock_runner_keeps_state_out_of_agent_and_actions_unchanged(tmp_path):
     assert metrics["repair_enabled"] is False
     assert metrics["state_prompt_leak_count"] == 0
     assert metrics["action_changed_count"] == 0
+    assert "repeated_behavior_risk_action_count" in metrics
+    assert "trajectory_risk_sample_count" in metrics
     rows = [
         json.loads(line)
         for line in (tmp_path / "logs" / "trajectories.jsonl").read_text().splitlines()
     ]
     assert len(rows) == 2
     for trajectory in rows:
+        assert "trajectory_risk_summary" in trajectory
         assert set(trajectory["shadow_state"]) == {"attributes", "actions"}
         for step in trajectory["steps"]:
             record = step["action_record"]
             assert record["executed_action"] == record["raw"]
+            assert record["raw_action"] == record["raw"]
             assert set(record["pre_check"]) == {"format_valid", "repeat_known_no_info"}
             assert set(record["post_check"]) == {
                 "visible_delta",
@@ -191,6 +272,9 @@ def test_mock_runner_keeps_state_out_of_agent_and_actions_unchanged(tmp_path):
                 "new_attrs",
                 "same_action_no_visible_delta_count",
                 "context_cycle_detected",
+                "same_action_signature_streak",
+                "repeated_behavior_risk",
+                "repeated_behavior_reason",
                 "no_progress",
                 "no_progress_reason",
                 "context_before",
