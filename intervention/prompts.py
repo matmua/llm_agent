@@ -52,11 +52,10 @@ You must output only valid JSON with exactly these fields:
 
 Output rules:
 
-- If "is_error": false, then "error_type" must be "none", "repair_hint" must be "", and "avoid_action" must be null.
+- If "is_error": false, then "error_type" must be "none", "repair_hint" must be "", and "avoid_action" must be null. The confidence may be any number between 0 and 1.
 - If "is_error": true, choose exactly one error type.
 - Keep "repair_hint" short and actionable.
 - Do not include long explanations.
 - Do not include markdown.
 - Do not include any fields other than the five required fields.
 """
-

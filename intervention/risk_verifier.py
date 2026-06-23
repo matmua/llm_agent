@@ -32,11 +32,12 @@ def verify_risk_if_triggered(
     client: Any,
     max_recent_steps: int = 6,
     temperature: float = 0.0,
+    stage: str = "post",
 ) -> dict[str, Any]:
     if not enabled:
         return default_verification(enabled=False, triggered=False, called=False)
 
-    trigger = find_risk_trigger(action_record)
+    trigger = find_risk_trigger(action_record, stage=stage)
     if trigger is None:
         return default_verification(enabled=True, triggered=False, called=False)
 
@@ -55,6 +56,8 @@ def verify_risk_if_triggered(
         current_observation=current_observation,
         available_actions=available_actions,
         max_recent_steps=max_recent_steps,
+        stage=stage,
+        risk_trigger=trigger,
     )
     try:
         raw_response = client.chat(
@@ -77,6 +80,56 @@ def verify_risk_if_triggered(
     return parse_verifier_response(str(raw_response))
 
 
+def verify_pre_risk_if_triggered(
+    action_record: dict[str, Any],
+    shadow_state: dict[str, Any],
+    task: str,
+    current_observation: str,
+    available_actions: dict[str, Any],
+    enabled: bool,
+    client: Any,
+    max_recent_steps: int = 6,
+    temperature: float = 0.0,
+) -> dict[str, Any]:
+    return verify_risk_if_triggered(
+        action_record=action_record,
+        shadow_state=shadow_state,
+        task=task,
+        current_observation=current_observation,
+        available_actions=available_actions,
+        enabled=enabled,
+        client=client,
+        max_recent_steps=max_recent_steps,
+        temperature=temperature,
+        stage="pre",
+    )
+
+
+def verify_post_risk_if_triggered(
+    action_record: dict[str, Any],
+    shadow_state: dict[str, Any],
+    task: str,
+    current_observation: str,
+    available_actions: dict[str, Any],
+    enabled: bool,
+    client: Any,
+    max_recent_steps: int = 6,
+    temperature: float = 0.0,
+) -> dict[str, Any]:
+    return verify_risk_if_triggered(
+        action_record=action_record,
+        shadow_state=shadow_state,
+        task=task,
+        current_observation=current_observation,
+        available_actions=available_actions,
+        enabled=enabled,
+        client=client,
+        max_recent_steps=max_recent_steps,
+        temperature=temperature,
+        stage="post",
+    )
+
+
 def build_risk_package(
     action_record: dict[str, Any],
     shadow_state: dict[str, Any],
@@ -84,23 +137,21 @@ def build_risk_package(
     current_observation: str,
     available_actions: dict[str, Any],
     max_recent_steps: int,
+    stage: str = "post",
+    risk_trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    trigger = find_risk_trigger(action_record) or {
-        "stage": "post",
+    trigger = risk_trigger or find_risk_trigger(action_record, stage=stage) or {
+        "stage": stage,
         "step": action_record.get("step"),
         "signal": "none",
         "candidate_error_type": "none",
     }
-    parsed = action_record.get("parsed_action") or {}
     post = action_record.get("post_check") or {}
+    action_under_check = _action_under_check(action_record, stage=stage)
     return {
         "task": task,
         "risk_trigger": trigger,
-        "action_under_check": {
-            "raw": action_record.get("raw_action", action_record.get("raw")),
-            "type": action_record.get("type", parsed.get("type")),
-            "params": action_record.get("params", parsed.get("params") or {}),
-        },
+        "action_under_check": action_under_check,
         "current_observation": str(current_observation or ""),
         "available_actions": format_available_actions(available_actions),
         "recent_trace": recent_trace(
@@ -120,9 +171,21 @@ def build_risk_package(
     }
 
 
-def find_risk_trigger(action_record: dict[str, Any]) -> dict[str, Any] | None:
+def find_risk_trigger(
+    action_record: dict[str, Any],
+    stage: str | None = None,
+) -> dict[str, Any] | None:
+    if stage == "pre":
+        return find_pre_risk_trigger(action_record)
+    if stage == "post":
+        return find_post_risk_trigger(action_record)
+    if stage is not None:
+        raise ValueError(f"stage must be 'pre' or 'post', got {stage!r}")
+    return find_pre_risk_trigger(action_record) or find_post_risk_trigger(action_record)
+
+
+def find_pre_risk_trigger(action_record: dict[str, Any]) -> dict[str, Any] | None:
     pre = action_record.get("pre_check") or {}
-    post = action_record.get("post_check") or {}
     step = action_record.get("step")
     if pre.get("format_valid") is False:
         return {
@@ -138,6 +201,12 @@ def find_risk_trigger(action_record: dict[str, Any]) -> dict[str, Any] | None:
             "signal": "repeat_known_no_info",
             "candidate_error_type": "loop_or_repetition",
         }
+    return None
+
+
+def find_post_risk_trigger(action_record: dict[str, Any]) -> dict[str, Any] | None:
+    post = action_record.get("post_check") or {}
+    step = action_record.get("step")
     if post.get("no_progress") is True:
         return {
             "stage": "post",
@@ -154,7 +223,7 @@ def find_risk_trigger(action_record: dict[str, Any]) -> dict[str, Any] | None:
         }
     if post.get("repeated_behavior_risk") is True:
         return {
-            "stage": "trajectory",
+            "stage": "post",
             "step": step,
             "signal": "repeated_behavior_risk",
             "candidate_error_type": "loop_or_repetition",
@@ -223,8 +292,6 @@ def validate_verifier_output(parsed: Any) -> str | None:
     if parsed["is_error"] is False:
         if error_type != "none":
             return "invalid_non_error_type"
-        if float(confidence) != 0.0:
-            return "invalid_non_error_confidence"
         if parsed["repair_hint"] != "":
             return "invalid_non_error_repair_hint"
         if avoid_action is not None:
@@ -232,6 +299,20 @@ def validate_verifier_output(parsed: Any) -> str | None:
     elif error_type not in ACTIVE_ERROR_TYPES:
         return "invalid_error_type_for_error"
     return None
+
+
+def _action_under_check(action_record: dict[str, Any], stage: str) -> dict[str, Any]:
+    if stage == "post":
+        raw_action = action_record.get("executed_action") or action_record.get("raw_action", action_record.get("raw"))
+        parsed = action_record.get("executed_parsed_action") or action_record.get("parsed_action") or {}
+    else:
+        raw_action = action_record.get("raw_action", action_record.get("raw"))
+        parsed = action_record.get("original_parsed_action") or action_record.get("parsed_action") or {}
+    return {
+        "raw": raw_action,
+        "type": parsed.get("type", action_record.get("type")),
+        "params": parsed.get("params", action_record.get("params") or {}),
+    }
 
 
 def default_verification(
@@ -279,7 +360,8 @@ def recent_trace(
         trace.append(
             {
                 "step": record.get("step"),
-                "action": record.get("raw_action", record.get("raw")),
+                "action": record.get("executed_action")
+                or record.get("raw_action", record.get("raw")),
                 "action_signature": record.get("action_signature"),
                 "visible_delta": post.get("visible_delta"),
                 "no_progress": post.get("no_progress"),
@@ -296,4 +378,3 @@ def _same_action_identity(left: dict[str, Any], right: dict[str, Any]) -> bool:
         left.get("step") == right.get("step")
         and left.get("raw_action", left.get("raw")) == right.get("raw_action", right.get("raw"))
     )
-

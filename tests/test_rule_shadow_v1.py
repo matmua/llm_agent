@@ -246,6 +246,7 @@ def test_mock_runner_keeps_state_out_of_agent_and_actions_unchanged(tmp_path):
             risk_verify_model="",
             risk_verify_recent_steps=6,
             risk_verify_temperature=0.0,
+            repair_hint_enabled="false",
             log_dir=str(tmp_path / "logs"),
             report_dir=str(tmp_path / "reports"),
         )
@@ -253,6 +254,8 @@ def test_mock_runner_keeps_state_out_of_agent_and_actions_unchanged(tmp_path):
     metrics = result["metrics"]
     assert metrics["state_to_agent"] is False
     assert metrics["repair_enabled"] is False
+    assert metrics["repair_hint_enabled"] is False
+    assert metrics["repair_hint_to_agent"] is False
     assert metrics["state_prompt_leak_count"] == 0
     assert metrics["action_changed_count"] == 0
     assert "repeated_behavior_risk_action_count" in metrics
@@ -269,18 +272,24 @@ def test_mock_runner_keeps_state_out_of_agent_and_actions_unchanged(tmp_path):
             record = step["action_record"]
             assert record["executed_action"] == record["raw"]
             assert record["raw_action"] == record["raw"]
-            assert record["risk_verification"] == {
-                "enabled": False,
-                "triggered": False,
-                "called": False,
-                "is_error": False,
-                "error_type": "none",
-                "confidence": 0.0,
-                "repair_hint": "",
-                "avoid_action": None,
-                "raw_response": None,
-                "parse_error": None,
-            }
+            assert set(record["risk_verifications"]) == {"pre", "post"}
+            for verification in record["risk_verifications"].values():
+                assert verification == {
+                    "enabled": False,
+                    "triggered": False,
+                    "called": False,
+                    "is_error": False,
+                    "error_type": "none",
+                    "confidence": 0.0,
+                    "repair_hint": "",
+                    "avoid_action": None,
+                    "raw_response": None,
+                    "parse_error": None,
+                }
+            assert record["repair"]["enabled"] is False
+            assert record["repair"]["hint_applied_from_previous_step"]["applied"] is False
+            assert record["repair"]["pre_repair_attempted"] is False
+            assert record["repair"]["post_hint_created"] is False
             assert set(record["pre_check"]) == {"format_valid", "repeat_known_no_info"}
             assert set(record["post_check"]) == {
                 "visible_delta",

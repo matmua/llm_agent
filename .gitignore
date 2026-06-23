@@ -25,6 +25,10 @@ logs/*
 !logs/rule_shadow_v1_trajrisk_webshop20/**
 !logs/rule_shadow_v1_llmverify_webshop20/
 !logs/rule_shadow_v1_llmverify_webshop20/**
+!logs/rule_shadow_v1_prepost_llmverify_webshop20/
+!logs/rule_shadow_v1_prepost_llmverify_webshop20/**
+!logs/rule_shadow_v1_hintrepair_webshop20/
+!logs/rule_shadow_v1_hintrepair_webshop20/**
 reports/*
 !reports/rule_shadow_v1_webshop20/
 !reports/rule_shadow_v1_webshop20/**
@@ -34,6 +38,10 @@ reports/*
 !reports/rule_shadow_v1_trajrisk_webshop20/**
 !reports/rule_shadow_v1_llmverify_webshop20/
 !reports/rule_shadow_v1_llmverify_webshop20/**
+!reports/rule_shadow_v1_prepost_llmverify_webshop20/
+!reports/rule_shadow_v1_prepost_llmverify_webshop20/**
+!reports/rule_shadow_v1_hintrepair_webshop20/
+!reports/rule_shadow_v1_hintrepair_webshop20/**
 
 # Python/cache noise
 __pycache__/

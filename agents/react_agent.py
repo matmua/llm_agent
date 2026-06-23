@@ -20,6 +20,7 @@ class WebShopReactAgent:
         action_history: list[dict[str, Any]],
         available_actions: dict[str, Any],
         state_summary: str = "",
+        repair_hint: str = "",
     ) -> str:
         prompt = self._build_prompt(
             task_instruction=task_instruction,
@@ -27,6 +28,7 @@ class WebShopReactAgent:
             action_history=action_history,
             available_actions=available_actions,
             state_summary=state_summary,
+            repair_hint=repair_hint,
         )
         response = self.client.chat(
             [
@@ -51,6 +53,7 @@ class WebShopReactAgent:
             "estimated_response_tokens": estimate_tokens(response),
             "estimated_total_tokens": estimate_tokens(prompt) + estimate_tokens(response),
             "prompt_contains_state_summary": "Current task state summary:" in prompt,
+            "prompt_contains_repair_hint": "Risk-control hint" in prompt,
             "prompt_excerpt": prompt[:4000],
             "raw_response": response[:2000],
         }
@@ -63,10 +66,12 @@ class WebShopReactAgent:
         action_history: list[dict[str, Any]],
         available_actions: dict[str, Any],
         state_summary: str,
+        repair_hint: str = "",
     ) -> str:
         recent_history = action_history[-6:]
         clickables = available_actions.get("clickables", [])
         state_block = f"Current task state summary:\n{state_summary}\n" if state_summary else ""
+        repair_block = f"{repair_hint}\n" if repair_hint else ""
         return (
             f"Task instruction:\n{task_instruction}\n"
             f"Observation:\n{observation}\n"
@@ -74,6 +79,7 @@ class WebShopReactAgent:
             f"has_search_bar: {str(bool(available_actions.get('has_search_bar'))).lower()}\n"
             f"clickables: {clickables}\n"
             f"{state_block}"
+            f"{repair_block}"
             f"Recent action history:\n{recent_history}\n\n"
             "Output exactly one line in one of these forms:\n"
             "Action: search[keywords]\n"

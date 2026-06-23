@@ -3,6 +3,8 @@ import json
 from intervention.risk_verifier import (
     build_risk_package,
     parse_verifier_response,
+    verify_post_risk_if_triggered,
+    verify_pre_risk_if_triggered,
     verify_risk_if_triggered,
 )
 
@@ -74,7 +76,7 @@ def test_non_error_output_must_be_conservative_shape():
         {
             "is_error": False,
             "error_type": "none",
-            "confidence": 0.0,
+            "confidence": 0.35,
             "repair_hint": "",
             "avoid_action": None,
         }
@@ -82,18 +84,19 @@ def test_non_error_output_must_be_conservative_shape():
     parsed = parse_verifier_response(raw)
     assert parsed["is_error"] is False
     assert parsed["error_type"] == "none"
+    assert parsed["confidence"] == 0.35
     assert parsed["parse_error"] is None
 
     invalid = json.dumps(
         {
             "is_error": False,
-            "error_type": "none",
+            "error_type": "loop_or_repetition",
             "confidence": 0.3,
             "repair_hint": "",
             "avoid_action": None,
         }
     )
-    assert parse_verifier_response(invalid)["parse_error"] == "invalid_non_error_confidence"
+    assert parse_verifier_response(invalid)["parse_error"] == "invalid_non_error_type"
 
 
 def test_verify_risk_fallbacks_do_not_call_llm_when_disabled_or_unavailable():
@@ -144,6 +147,44 @@ def test_verify_risk_fallbacks_do_not_call_llm_when_disabled_or_unavailable():
     assert unavailable["parse_error"] == "llm_client_unavailable"
 
 
+def test_pre_and_post_verifiers_are_stage_specific():
+    pre_action = _risk_action()
+    pre_action["pre_check"] = {"format_valid": False, "repeat_known_no_info": False}
+    pre_action["post_check"] = {}
+    client = JsonClient(
+        {
+            "is_error": True,
+            "error_type": "format_error",
+            "confidence": 0.8,
+            "repair_hint": "Use the required format.",
+            "avoid_action": None,
+        }
+    )
+    pre_result = verify_pre_risk_if_triggered(
+        action_record=pre_action,
+        shadow_state={"actions": []},
+        task="task",
+        current_observation="before",
+        available_actions={"has_search_bar": True, "clickables": ["next >"]},
+        enabled=True,
+        client=client,
+    )
+    assert pre_result["is_error"] is True
+    assert client.calls == 1
+
+    post_result = verify_post_risk_if_triggered(
+        action_record=pre_action,
+        shadow_state={"actions": []},
+        task="task",
+        current_observation="after",
+        available_actions={"has_search_bar": True, "clickables": ["next >"]},
+        enabled=True,
+        client=client,
+    )
+    assert post_result["triggered"] is False
+    assert client.calls == 1
+
+
 def test_build_risk_package_limits_recent_trace_and_omits_outcome_labels():
     current = _risk_action(step=8)
     previous = []
@@ -162,7 +203,7 @@ def test_build_risk_package_limits_recent_trace_and_omits_outcome_labels():
         max_recent_steps=3,
     )
     assert package["risk_trigger"] == {
-        "stage": "trajectory",
+        "stage": "post",
         "step": 8,
         "signal": "repeated_behavior_risk",
         "candidate_error_type": "loop_or_repetition",
@@ -171,4 +212,3 @@ def test_build_risk_package_limits_recent_trace_and_omits_outcome_labels():
     assert [item["step"] for item in package["recent_trace"]] == [4, 5, 8]
     assert "success" not in json.dumps(package)
     assert "reward" not in json.dumps(package)
-

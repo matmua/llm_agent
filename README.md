@@ -2,16 +2,18 @@
 
 Minimal rule-based shadow v1 for WebShop agent trajectories.
 
-This version only implements:
+This version implements:
 
 - agent loop
 - shadow state table
 - rule-based pre check
 - rule-based post check
+- optional pre/post LLM risk verification after rule triggers
+- optional lightweight one-shot repair hints
 
-It does not implement LLM detectors, LLM state proposal, risk levels, blocking,
-intervention, rollback, recovery, action repair, or state injection into the
-agent prompt.
+It does not implement LLM state proposal, risk levels, rollback, full recovery,
+full shadow-state injection into the agent prompt, or benchmark-specific
+WebShop option rules.
 
 ## Active Layout
 
@@ -22,7 +24,8 @@ agent prompt.
 - `shadow/pre.py`: format and repeated no-info pre check.
 - `shadow/post.py`: post-action visible-delta, no-progress, and trajectory-risk checks.
 - `shadow/repair.py`: no-op repair placeholder.
-- `intervention/risk_verifier.py`: optional LLM verifier for rule-triggered risks; records only.
+- `intervention/risk_verifier.py`: optional pre/post LLM verifier for rule-triggered risks; verify-only.
+- `intervention/repair_hint.py`: fixed-template lightweight repair hints.
 - `intervention/prompts.py`: fixed LLM verifier prompt.
 - `runners/webshop_env.py`: official/mock WebShop environment adapter.
 - `agents/`: ReAct agent and OpenAI-compatible/mock client.
@@ -47,7 +50,7 @@ server network instead of inherited local proxy variables:
 
 ## Run WebShop20
 
-Start a local OpenAI-compatible model endpoint, then run:
+Start a local OpenAI-compatible model endpoint, then run verify-only mode:
 
 ```bash
 ./no_proxy_run.sh bash -lc '
@@ -64,8 +67,32 @@ Start a local OpenAI-compatible model endpoint, then run:
     --state_to_agent false \
     --llm_risk_verify \
     --risk_verify_model "$LLM_MODEL" \
-    --log_dir logs/rule_shadow_v1_llmverify_webshop20 \
-    --report_dir reports/rule_shadow_v1_llmverify_webshop20
+    --repair_hint_enabled false \
+    --log_dir logs/rule_shadow_v1_prepost_llmverify_webshop20 \
+    --report_dir reports/rule_shadow_v1_prepost_llmverify_webshop20
+'
+```
+
+Lightweight hint-repair mode:
+
+```bash
+./no_proxy_run.sh bash -lc '
+  export PATH=/root/miniconda3/envs/webshop/bin:$PATH
+  export JAVA_HOME=/root/miniconda3/envs/webshop
+  export JVM_PATH=/root/miniconda3/envs/webshop/lib/jvm/lib/server/libjvm.so
+  set -a; [ -f .env ] && source .env; set +a
+  /root/miniconda3/envs/webshop/bin/python -m runners.run_webshop_shadow \
+    --env official \
+    --num_samples 20 \
+    --start_index 0 \
+    --max_steps 15 \
+    --model "$LLM_MODEL" \
+    --state_to_agent false \
+    --llm_risk_verify \
+    --risk_verify_model "$LLM_MODEL" \
+    --repair_hint_enabled true \
+    --log_dir logs/rule_shadow_v1_hintrepair_webshop20 \
+    --report_dir reports/rule_shadow_v1_hintrepair_webshop20
 '
 ```
 
@@ -88,6 +115,12 @@ Mock smoke run:
 - `logs/rule_shadow_v1_llmverify_webshop20/trajectories.jsonl`
 - `reports/rule_shadow_v1_llmverify_webshop20/metrics.json`
 - `reports/rule_shadow_v1_llmverify_webshop20/summary_zh.md`
+- `logs/rule_shadow_v1_prepost_llmverify_webshop20/trajectories.jsonl`
+- `reports/rule_shadow_v1_prepost_llmverify_webshop20/metrics.json`
+- `reports/rule_shadow_v1_prepost_llmverify_webshop20/summary_zh.md`
+- `logs/rule_shadow_v1_hintrepair_webshop20/trajectories.jsonl`
+- `reports/rule_shadow_v1_hintrepair_webshop20/metrics.json`
+- `reports/rule_shadow_v1_hintrepair_webshop20/summary_zh.md`
 - `logs/rule_shadow_v1_repeat_webshop20/trajectories.jsonl`
 - `reports/rule_shadow_v1_repeat_webshop20/metrics.json`
 - `reports/rule_shadow_v1_repeat_webshop20/summary_zh.md`

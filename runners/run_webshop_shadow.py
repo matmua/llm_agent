@@ -1,7 +1,7 @@
 """Run rule-based shadow v1 on WebShop.
 
-The runner never injects shadow state into the agent prompt, never blocks or
-rewrites actions, and never performs repair.
+The runner never injects full shadow state into the agent prompt. By default it
+only verifies rule-triggered risks; lightweight repair hints are opt-in.
 """
 
 from __future__ import annotations
@@ -15,7 +15,18 @@ from typing import Any
 
 from agents.llm_client import MockLLMClient, OpenAIChatClient
 from agents.react_agent import WebShopReactAgent
-from intervention.risk_verifier import verify_risk_if_triggered
+from intervention.repair_hint import (
+    build_repair_hint,
+    format_hint_for_agent,
+    mark_hint_outcome,
+    should_apply_pre_repair,
+    should_create_post_hint,
+)
+from intervention.risk_verifier import (
+    default_verification,
+    verify_post_risk_if_triggered,
+    verify_pre_risk_if_triggered,
+)
 from runners.webshop_env import make_webshop_env
 from shadow.extractor import (
     context_value,
@@ -25,7 +36,6 @@ from shadow.extractor import (
 from shadow.parser import action_signature, parse_action
 from shadow.post import run_post_check
 from shadow.pre import run_pre_check
-from shadow.repair import propose_repair
 from shadow.state import (
     attributes_summary,
     check_params,
@@ -63,8 +73,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--risk_verify_recent_steps", type=int, default=6)
     parser.add_argument("--risk_verify_temperature", type=float, default=0.0)
-    parser.add_argument("--log_dir", default="logs/rule_shadow_v1_llmverify_webshop20")
-    parser.add_argument("--report_dir", default="reports/rule_shadow_v1_llmverify_webshop20")
+    parser.add_argument("--repair_hint_enabled", nargs="?", const="true", default="false")
+    parser.add_argument("--log_dir", default="logs/rule_shadow_v1_prepost_llmverify_webshop20")
+    parser.add_argument("--report_dir", default="reports/rule_shadow_v1_prepost_llmverify_webshop20")
     return parser.parse_args()
 
 
@@ -74,6 +85,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     env = make_webshop_env(args.env, repo_path=args.webshop_repo, num_products=args.num_products)
     agent = WebShopReactAgent(_build_client(args.model))
     llm_risk_verify_enabled = _parse_bool(getattr(args, "llm_risk_verify", "false"))
+    repair_hint_enabled = _parse_bool(getattr(args, "repair_hint_enabled", "false"))
     risk_client = _build_risk_client(getattr(args, "risk_verify_model", "")) if llm_risk_verify_enabled else None
     log_dir = Path(args.log_dir)
     report_dir = Path(args.report_dir)
@@ -89,7 +101,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "start_index": args.start_index,
         "max_steps": args.max_steps,
         "state_to_agent": False,
-        "repair_enabled": False,
+        "repair_enabled": repair_hint_enabled,
+        "repair_hint_enabled": repair_hint_enabled,
+        "repair_hint_to_agent": repair_hint_enabled,
         "llm_risk_verify_enabled": llm_risk_verify_enabled,
         "risk_verify_model": getattr(risk_client, "model", getattr(args, "risk_verify_model", "")),
         "risk_verify_recent_steps": getattr(args, "risk_verify_recent_steps", 6),
@@ -111,6 +125,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 risk_client=risk_client,
                 risk_verify_recent_steps=getattr(args, "risk_verify_recent_steps", 6),
                 risk_verify_temperature=getattr(args, "risk_verify_temperature", 0.0),
+                repair_hint_enabled=repair_hint_enabled,
             )
             trajectories.append(trajectory)
             fh.write(json.dumps(trajectory, ensure_ascii=True) + "\n")
@@ -138,6 +153,7 @@ def _run_episode(
     risk_client: Any = None,
     risk_verify_recent_steps: int = 6,
     risk_verify_temperature: float = 0.0,
+    repair_hint_enabled: bool = False,
 ) -> dict[str, Any]:
     observation = env.reset(task_id)
     instruction = env.get_instruction_text()
@@ -152,22 +168,44 @@ def _run_episode(
     steps: list[dict[str, Any]] = []
     done = False
     final_reward = 0.0
+    pending_post_hint: dict[str, Any] | None = None
 
     for step in range(max_steps):
         available_before = env.get_available_actions()
         context_before = current_context(shadow_state) or context_value(observation)
+        repair_record = _default_repair_record(enabled=repair_hint_enabled)
+        prompt_repair_hint = ""
+        applied_pending_hint = pending_post_hint
+        if repair_hint_enabled and applied_pending_hint is not None:
+            prompt_repair_hint = format_hint_for_agent(applied_pending_hint)
+
         raw_action = agent.act(
             task_instruction=instruction,
             observation=observation,
             action_history=history,
             available_actions=available_before,
             state_summary="",
+            repair_hint=prompt_repair_hint,
         )
+        if repair_hint_enabled and applied_pending_hint is not None:
+            outcome = mark_hint_outcome(applied_pending_hint, raw_action)
+            repair_record["hint_applied_from_previous_step"] = {
+                "applied": True,
+                "source_step": applied_pending_hint.get("source_step"),
+                "error_type": applied_pending_hint.get("error_type"),
+                "hint": prompt_repair_hint,
+                "avoid_action": applied_pending_hint.get("avoid_action"),
+                "followed": outcome["followed"],
+            }
+            pending_post_hint = None
+
         parsed = parse_action(raw_action)
         action_record: dict[str, Any] = {
             "step": step,
             "raw": raw_action,
             "raw_action": raw_action,
+            "original_parsed_action": parsed,
+            "original_action_signature": action_signature(parsed),
             "type": parsed["type"],
             "params": parsed["params"],
             "parsed_action": parsed,
@@ -176,10 +214,65 @@ def _run_episode(
             "param_checks": check_params(parsed, shadow_state["attributes"]),
         }
         action_record["pre_check"] = run_pre_check(action_record, shadow_state)
-        action_record["repair_placeholder"] = propose_repair(action_record, shadow_state)
+        pre_verification = verify_pre_risk_if_triggered(
+            action_record=action_record,
+            shadow_state=shadow_state,
+            task=instruction,
+            current_observation=observation,
+            available_actions=available_before,
+            enabled=llm_risk_verify_enabled,
+            client=risk_client,
+            max_recent_steps=risk_verify_recent_steps,
+            temperature=risk_verify_temperature,
+        )
+        action_record["risk_verifications"] = {
+            "pre": pre_verification,
+            "post": default_verification(
+                enabled=llm_risk_verify_enabled,
+                triggered=False,
+                called=False,
+            ),
+        }
+        action_record["repair"] = repair_record
+
         executed_action = raw_action
-        assert executed_action == raw_action
+        executed_parsed = parsed
+        if should_apply_pre_repair(pre_verification, repair_hint_enabled):
+            pre_hint = build_repair_hint(pre_verification, "pre", action_record)
+            pre_hint_text = format_hint_for_agent(pre_hint)
+            repaired_action = agent.act(
+                task_instruction=instruction,
+                observation=observation,
+                action_history=history,
+                available_actions=available_before,
+                state_summary="",
+                repair_hint=pre_hint_text,
+            )
+            repaired_parsed = parse_action(repaired_action)
+            repair_record.update(
+                {
+                    "pre_repair_attempted": True,
+                    "pre_repair_hint": pre_hint_text,
+                    "pre_repair_original_action": raw_action,
+                    "pre_repair_repaired_action": repaired_action,
+                }
+            )
+            if repaired_parsed.get("format_valid"):
+                executed_action = repaired_action
+                executed_parsed = repaired_parsed
+                repair_record["pre_repair_success"] = True
+            else:
+                repair_record["pre_repair_success"] = False
+                repair_record["pre_repair_failed_reason"] = "invalid_repaired_action_format"
+
         action_record["executed_action"] = executed_action
+        action_record["executed_parsed_action"] = executed_parsed
+        action_record["action_changed"] = executed_action != raw_action
+        action_record["type"] = executed_parsed["type"]
+        action_record["params"] = executed_parsed["params"]
+        action_record["parsed_action"] = executed_parsed
+        action_record["action_signature"] = action_signature(executed_parsed)
+        action_record["param_checks"] = check_params(executed_parsed, shadow_state["attributes"])
 
         attributes_before = clone_attributes(shadow_state)
         observation_after, reward, done, info = env.step(executed_action)
@@ -194,7 +287,7 @@ def _run_episode(
             context_after=str(observed_after["context.current"]["current_value"]),
         )
         action_record["post_check"] = post_check
-        action_record["risk_verification"] = verify_risk_if_triggered(
+        post_verification = verify_post_risk_if_triggered(
             action_record=action_record,
             shadow_state=shadow_state,
             task=instruction,
@@ -205,19 +298,38 @@ def _run_episode(
             max_recent_steps=risk_verify_recent_steps,
             temperature=risk_verify_temperature,
         )
+        action_record["risk_verifications"]["post"] = post_verification
+        if should_create_post_hint(post_verification, repair_hint_enabled):
+            pending_post_hint = build_repair_hint(post_verification, "post", action_record)
+            post_hint_text = format_hint_for_agent(pending_post_hint)
+            repair_record.update(
+                {
+                    "post_hint_created": True,
+                    "post_hint": post_hint_text,
+                    "post_hint_apply_to_next_step": True,
+                }
+            )
+
         merge_attributes(shadow_state, observed_after)
         shadow_state["actions"].append(action_record)
 
         step_log = {
             "step": step,
             "state_to_agent": False,
+            "repair_hint_to_agent": bool(
+                prompt_repair_hint or repair_record.get("pre_repair_attempted")
+            ),
             "agent_prompt_contains_state_summary": bool(
                 agent.last_trace.get("prompt_contains_state_summary")
+            ),
+            "agent_prompt_contains_repair_hint": bool(
+                agent.last_trace.get("prompt_contains_repair_hint")
             ),
             "observation_before_hash": context_before,
             "observation_before": observation,
             "raw_action": raw_action,
             "parsed_action": parsed,
+            "executed_action": executed_action,
             "action_record": action_record,
             "observation_after_hash": post_check["context_after"],
             "observation_after": observation_after,
@@ -232,6 +344,7 @@ def _run_episode(
                 "step": step,
                 "raw_action": raw_action,
                 "executed_action": executed_action,
+                "action_changed": executed_action != raw_action,
                 "reward": final_reward,
                 "done": done,
             }
@@ -251,6 +364,29 @@ def _run_episode(
         "trajectory_risk_summary": build_trajectory_risk_summary(steps),
         "shadow_state": shadow_state,
         "steps": steps,
+    }
+
+
+def _default_repair_record(enabled: bool) -> dict[str, Any]:
+    return {
+        "enabled": enabled,
+        "hint_applied_from_previous_step": {
+            "applied": False,
+            "source_step": None,
+            "error_type": None,
+            "hint": "",
+            "avoid_action": None,
+            "followed": None,
+        },
+        "pre_repair_attempted": False,
+        "pre_repair_hint": "",
+        "pre_repair_original_action": None,
+        "pre_repair_repaired_action": None,
+        "pre_repair_success": False,
+        "pre_repair_failed_reason": None,
+        "post_hint_created": False,
+        "post_hint": "",
+        "post_hint_apply_to_next_step": False,
     }
 
 
@@ -279,21 +415,32 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
         "wrong_action_or_param": 0,
         "none": 0,
     }
-    for record in action_records:
-        verification = record.get("risk_verification") or {}
+    verifications = [
+        _stage_verification(record, stage)
+        for record in action_records
+        for stage in ("pre", "post")
+    ]
+    for verification in verifications:
         if not verification.get("called") or verification.get("parse_error"):
             continue
         error_type = verification.get("error_type", "none")
         if error_type in llm_error_type_counts:
             llm_error_type_counts[error_type] += 1
+    repair_enabled = any((record.get("repair") or {}).get("enabled") for record in action_records)
+    repair_hint_applied = sum(
+        1
+        for record in action_records
+        if (record.get("repair") or {}).get("hint_applied_from_previous_step", {}).get("applied")
+    )
     return {
         "num_samples": num_samples,
         "max_steps": max_steps,
         "state_to_agent": False,
-        "repair_enabled": False,
+        "repair_enabled": repair_enabled,
+        "repair_hint_enabled": repair_enabled,
+        "repair_hint_to_agent": repair_enabled,
         "llm_risk_verify_enabled": any(
-            (record.get("risk_verification") or {}).get("enabled")
-            for record in action_records
+            verification.get("enabled") for verification in verifications
         ),
         "num_actions": len(action_records),
         "format_invalid_count": sum(
@@ -334,27 +481,79 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
             for item in action_records
             if item.get("post_check", {}).get("repeated_behavior_risk")
         ),
+        "pre_rule_risk_trigger_action_count": sum(
+            1 for item in action_records if _stage_verification(item, "pre").get("triggered")
+        ),
+        "post_rule_risk_trigger_action_count": sum(
+            1 for item in action_records if _stage_verification(item, "post").get("triggered")
+        ),
+        "pre_llm_called_action_count": sum(
+            1 for item in action_records if _stage_verification(item, "pre").get("called")
+        ),
+        "post_llm_called_action_count": sum(
+            1 for item in action_records if _stage_verification(item, "post").get("called")
+        ),
+        "pre_llm_parse_error_count": sum(
+            1 for item in action_records if _stage_verification(item, "pre").get("parse_error")
+        ),
+        "post_llm_parse_error_count": sum(
+            1 for item in action_records if _stage_verification(item, "post").get("parse_error")
+        ),
+        "pre_llm_is_error_action_count": sum(
+            1 for item in action_records if _stage_verification(item, "pre").get("is_error")
+        ),
+        "post_llm_is_error_action_count": sum(
+            1 for item in action_records if _stage_verification(item, "post").get("is_error")
+        ),
         "rule_risk_trigger_action_count": sum(
             1
-            for item in action_records
-            if (item.get("risk_verification") or {}).get("triggered")
+            for verification in verifications
+            if verification.get("triggered")
         ),
         "llm_called_action_count": sum(
             1
-            for item in action_records
-            if (item.get("risk_verification") or {}).get("called")
+            for verification in verifications
+            if verification.get("called")
         ),
         "llm_parse_error_count": sum(
             1
-            for item in action_records
-            if (item.get("risk_verification") or {}).get("parse_error")
+            for verification in verifications
+            if verification.get("parse_error")
         ),
         "llm_is_error_action_count": sum(
             1
-            for item in action_records
-            if (item.get("risk_verification") or {}).get("is_error")
+            for verification in verifications
+            if verification.get("is_error")
         ),
         "llm_error_type_counts": llm_error_type_counts,
+        "pre_repair_attempt_count": sum(
+            1 for item in action_records if (item.get("repair") or {}).get("pre_repair_attempted")
+        ),
+        "pre_repair_success_count": sum(
+            1 for item in action_records if (item.get("repair") or {}).get("pre_repair_success")
+        ),
+        "pre_repair_fallback_count": sum(
+            1
+            for item in action_records
+            if (item.get("repair") or {}).get("pre_repair_attempted")
+            and not (item.get("repair") or {}).get("pre_repair_success")
+        ),
+        "post_hint_created_count": sum(
+            1 for item in action_records if (item.get("repair") or {}).get("post_hint_created")
+        ),
+        "post_hint_applied_count": repair_hint_applied,
+        "repair_hint_followed_count": sum(
+            1
+            for item in action_records
+            if (item.get("repair") or {}).get("hint_applied_from_previous_step", {}).get("followed")
+            is True
+        ),
+        "repair_hint_ignored_count": sum(
+            1
+            for item in action_records
+            if (item.get("repair") or {}).get("hint_applied_from_previous_step", {}).get("followed")
+            is False
+        ),
         "info_gain_true_count": sum(
             1 for item in action_records if item.get("post_check", {}).get("info_gain")
         ),
@@ -451,12 +650,28 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
             for step in trajectory.get("steps", [])
             if step.get("agent_prompt_contains_state_summary")
         ),
+        "repair_hint_prompt_count": sum(
+            1
+            for trajectory in trajectories
+            for step in trajectory.get("steps", [])
+            if step.get("agent_prompt_contains_repair_hint")
+        ),
         "action_changed_count": sum(
             1
             for item in action_records
-            if item.get("executed_action") != item.get("raw_action", item.get("raw"))
+            if item.get("action_changed")
+            or item.get("executed_action") != item.get("raw_action", item.get("raw"))
         ),
     }
+
+
+def _stage_verification(record: dict[str, Any], stage: str) -> dict[str, Any]:
+    verifications = record.get("risk_verifications") or {}
+    if stage in verifications:
+        return verifications[stage] or {}
+    if stage == "post" and "risk_verification" in record:
+        return record.get("risk_verification") or {}
+    return default_verification(enabled=False, triggered=False, called=False)
 
 
 def build_trajectory_risk_summary(steps: list[dict[str, Any]]) -> dict[str, Any]:
@@ -464,9 +679,29 @@ def build_trajectory_risk_summary(steps: list[dict[str, Any]]) -> dict[str, Any]
     llm_verified_error_events: list[dict[str, Any]] = []
     for step in steps:
         record = step.get("action_record") or {}
+        pre = record.get("pre_check") or {}
         post = record.get("post_check") or {}
-        verification = record.get("risk_verification") or {}
         step_id = int(record.get("step", step.get("step", 0)))
+        if pre.get("format_valid") is False:
+            risk_events.append(
+                {
+                    "step": step_id,
+                    "type": "pre_format_invalid",
+                    "action_signature": record.get("original_action_signature")
+                    or record.get("action_signature"),
+                    "reason": "format_invalid",
+                }
+            )
+        if pre.get("repeat_known_no_info") is True:
+            risk_events.append(
+                {
+                    "step": step_id,
+                    "type": "pre_repeat_known_no_info",
+                    "action_signature": record.get("original_action_signature")
+                    or record.get("action_signature"),
+                    "reason": "repeat_known_no_info",
+                }
+            )
         if post.get("no_progress"):
             risk_events.append(
                 {
@@ -498,17 +733,20 @@ def build_trajectory_risk_summary(steps: list[dict[str, Any]]) -> dict[str, Any]
                     "reason": post.get("no_progress_reason"),
                 }
             )
-        if verification.get("is_error"):
-            llm_verified_error_events.append(
-                {
-                    "step": step_id,
-                    "error_type": verification.get("error_type"),
-                    "confidence": verification.get("confidence"),
-                    "avoid_action": verification.get("avoid_action"),
-                    "repair_hint": verification.get("repair_hint"),
-                    "action_signature": record.get("action_signature"),
-                }
-            )
+        for stage in ("pre", "post"):
+            verification = _stage_verification(record, stage)
+            if verification.get("is_error"):
+                llm_verified_error_events.append(
+                    {
+                        "step": step_id,
+                        "stage": stage,
+                        "error_type": verification.get("error_type"),
+                        "confidence": verification.get("confidence"),
+                        "avoid_action": verification.get("avoid_action"),
+                        "repair_hint": verification.get("repair_hint"),
+                        "action_signature": record.get("action_signature"),
+                    }
+                )
 
     first_no_progress = _first_event_step(risk_events, "action_no_progress")
     first_repeated = _first_event_step(risk_events, "repeated_behavior_risk")
@@ -557,6 +795,8 @@ def _avg_present(values: Any) -> float | None:
 
 
 def render_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) -> str:
+    if metrics.get("repair_hint_enabled"):
+        return render_repair_summary(metrics, trajectories)
     if metrics.get("llm_risk_verify_enabled"):
         return render_llmverify_summary(metrics, trajectories)
     examples = _example_records(trajectories)
@@ -617,7 +857,7 @@ def render_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) 
         "- `state_to_agent=false`，日志中 `state_prompt_leak_count=0`。",
         "- `executed_action == raw_action`，日志中 `action_changed_count=0`。",
         "- `shadow_state` 只包含 `attributes` 和 `actions` 两张表。",
-        "- `repair_placeholder.enabled=false`，没有触发修复、阻断、回滚或 action 改写。",
+        "- `repair.enabled=false`，没有触发修复、阻断、回滚或 action 改写。",
         "- active 逻辑中没有 hidden_state_update、selected_option 或 effect.selected_option。",
         "",
         "## action_record 示例",
@@ -634,18 +874,27 @@ def render_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) 
 
 
 def render_llmverify_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) -> str:
-    examples = _risk_verification_examples(trajectories)
+    pre_example = _find_stage_verification_record(
+        trajectories,
+        "pre",
+        lambda verification: bool(verification.get("called")),
+    )
+    post_example = _find_stage_verification_record(
+        trajectories,
+        "post",
+        lambda verification: bool(verification.get("called")),
+    )
     lines = [
-        "# rule-based shadow v1 LLM Risk Verifier WebShop20 报告",
+        "# rule-based shadow v1 pre/post LLM Risk Verifier WebShop20 报告",
         "",
-        "本次新增独立 LLM Risk Verifier 模块。",
+        "本次是 pre/post 双接口 LLM risk verification。",
         "",
-        "- LLM verifier 只在规则风险触发后调用。",
-        "- LLM verifier 不修改 action。",
-        "- LLM verifier 不执行修复。",
-        "- shadow state 没有注入 agent。",
-        "- `repair_hint` 和 `avoid_action` 本次只记录，不使用。",
-        "- 不确定一律判为 `is_error=false`。",
+        "- pre 和 post 规则本身没有改。",
+        "- verifier 只在规则风险触发后调用。",
+        "- verifier 不修改 action。",
+        "- verifier 不执行修复。",
+        "- state 没有注入 agent。",
+        "- 方案 B 已完成：`is_error=false` 时允许 confidence 为 `[0,1]`。",
         "- verifier 只判断四类错误：evidence_guessing、format_error、loop_or_repetition、wrong_action_or_param。",
         "- verifier 输出只接受五个字段：is_error、error_type、confidence、repair_hint、avoid_action。",
         "",
@@ -656,6 +905,16 @@ def render_llmverify_summary(metrics: dict[str, Any], trajectories: list[dict[st
         f"- action 数：{metrics['num_actions']}",
         f"- success：{metrics['success_count']} / {metrics['num_samples']} = {metrics['success_rate']:.4f}",
         f"- llm_risk_verify_enabled：{metrics['llm_risk_verify_enabled']}",
+        f"- repair_hint_enabled：{metrics['repair_hint_enabled']}",
+        f"- repair_hint_to_agent：{metrics['repair_hint_to_agent']}",
+        f"- pre_rule_risk_trigger_action_count：{metrics['pre_rule_risk_trigger_action_count']}",
+        f"- post_rule_risk_trigger_action_count：{metrics['post_rule_risk_trigger_action_count']}",
+        f"- pre_llm_called_action_count：{metrics['pre_llm_called_action_count']}",
+        f"- post_llm_called_action_count：{metrics['post_llm_called_action_count']}",
+        f"- pre_llm_parse_error_count：{metrics['pre_llm_parse_error_count']}",
+        f"- post_llm_parse_error_count：{metrics['post_llm_parse_error_count']}",
+        f"- pre_llm_is_error_action_count：{metrics['pre_llm_is_error_action_count']}",
+        f"- post_llm_is_error_action_count：{metrics['post_llm_is_error_action_count']}",
         f"- rule_risk_trigger_action_count：{metrics['rule_risk_trigger_action_count']}",
         f"- llm_called_action_count：{metrics['llm_called_action_count']}",
         f"- llm_parse_error_count：{metrics['llm_parse_error_count']}",
@@ -676,19 +935,130 @@ def render_llmverify_summary(metrics: dict[str, Any], trajectories: list[dict[st
         "",
         "## 最终检查",
         "",
-        "- 运行命令：`python -m runners.run_webshop_shadow --env official --num_samples 20 --start_index 0 --max_steps 15 --model qwen3-8b --state_to_agent false --llm_risk_verify --risk_verify_model qwen3-8b --log_dir logs/rule_shadow_v1_llmverify_webshop20 --report_dir reports/rule_shadow_v1_llmverify_webshop20`",
+        "- 运行命令：`python -m runners.run_webshop_shadow --env official --num_samples 20 --start_index 0 --max_steps 15 --model qwen3-8b --state_to_agent false --llm_risk_verify --risk_verify_model qwen3-8b --repair_hint_enabled false --log_dir logs/rule_shadow_v1_prepost_llmverify_webshop20 --report_dir reports/rule_shadow_v1_prepost_llmverify_webshop20`",
         "- 活跃 verifier 模块：`intervention/risk_verifier.py`。",
         "- 活跃 verifier prompt：`intervention/prompts.py`。",
         "- `state_to_agent=false`，日志中 `state_prompt_leak_count=0`。",
         "- `executed_action == raw_action`，日志中 `action_changed_count=0`。",
-        "- `repair_placeholder.enabled=false`，没有触发修复、阻断、回滚或 action 改写。",
+        "- `repair_hint_enabled=false`，没有触发修复、阻断、回滚或 action 改写。",
         "",
-        "## risk_verification 示例",
+        "## risk_verifications 示例",
         "",
     ]
-    for title, record in examples:
+    if pre_example is not None:
+        lines.append("### pre verification 示例")
+        lines.append("")
+        lines.append("```json")
+        lines.append(
+            json.dumps(
+                {
+                    "task_id": pre_example.get("task_id"),
+                    "step": pre_example.get("step"),
+                    "raw_action": pre_example.get("raw_action"),
+                    "pre_check": pre_example.get("pre_check"),
+                    "risk_verification": _stage_verification(pre_example, "pre"),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )[:3000]
+        )
+        lines.append("```")
+        lines.append("")
+    else:
+        lines.append("### pre verification 示例")
+        lines.append("")
+        lines.append("本次 20 条轨迹没有触发 pre verifier。")
+        lines.append("")
+    if post_example is not None:
+        lines.append("### post verification 示例")
+        lines.append("")
+        lines.append("```json")
+        lines.append(
+            json.dumps(
+                {
+                    "task_id": post_example.get("task_id"),
+                    "step": post_example.get("step"),
+                    "raw_action": post_example.get("raw_action"),
+                    "executed_action": post_example.get("executed_action"),
+                    "post_signal_summary": _post_signal_summary(post_example.get("post_check") or {}),
+                    "risk_verification": _stage_verification(post_example, "post"),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )[:3000]
+        )
+        lines.append("```")
+        lines.append("")
+    else:
+        lines.append("### post verification 示例")
+        lines.append("")
+        lines.append("本次 20 条轨迹没有触发 post verifier。")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def render_repair_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) -> str:
+    pre_repair = _find_repair_record(
+        trajectories,
+        lambda repair: bool(repair.get("pre_repair_attempted")),
+    )
+    post_hint = _find_repair_record(
+        trajectories,
+        lambda repair: bool(repair.get("post_hint_created")),
+    )
+    applied_hint = _find_repair_record(
+        trajectories,
+        lambda repair: bool(repair.get("hint_applied_from_previous_step", {}).get("applied")),
+    )
+    lines = [
+        "# rule-based shadow v1 lightweight repair hint WebShop20 报告",
+        "",
+        "本次是轻量 repair hint 模式。",
+        "",
+        "- pre verified error 会尝试当前 step 重新生成一次 action。",
+        "- post verified error 会创建下一步一次性 repair hint。",
+        "- 不做回滚。",
+        "- 不做多轮重试。",
+        "- 不把完整 state 给 agent。",
+        "- `state_to_agent=false`，但 `repair_hint_to_agent=true`。",
+        "",
+        "## 统计结果",
+        "",
+        f"- 样本数：{metrics['num_samples']}",
+        f"- 最大步数：{metrics['max_steps']}",
+        f"- action 数：{metrics['num_actions']}",
+        f"- success：{metrics['success_count']} / {metrics['num_samples']} = {metrics['success_rate']:.4f}",
+        f"- 平均 reward：{metrics['avg_reward']:.4f}",
+        f"- 平均步数：{metrics['avg_steps']:.2f}",
+        f"- pre_rule_risk_trigger_action_count：{metrics['pre_rule_risk_trigger_action_count']}",
+        f"- post_rule_risk_trigger_action_count：{metrics['post_rule_risk_trigger_action_count']}",
+        f"- pre_llm_is_error_action_count：{metrics['pre_llm_is_error_action_count']}",
+        f"- post_llm_is_error_action_count：{metrics['post_llm_is_error_action_count']}",
+        f"- pre_repair_attempt_count：{metrics['pre_repair_attempt_count']}",
+        f"- pre_repair_success_count：{metrics['pre_repair_success_count']}",
+        f"- pre_repair_fallback_count：{metrics['pre_repair_fallback_count']}",
+        f"- post_hint_created_count：{metrics['post_hint_created_count']}",
+        f"- post_hint_applied_count：{metrics['post_hint_applied_count']}",
+        f"- repair_hint_followed_count：{metrics['repair_hint_followed_count']}",
+        f"- repair_hint_ignored_count：{metrics['repair_hint_ignored_count']}",
+        f"- action_changed_count：{metrics['action_changed_count']}",
+        f"- state_prompt_leak_count：{metrics['state_prompt_leak_count']}",
+        f"- repair_hint_prompt_count：{metrics['repair_hint_prompt_count']}",
+        "",
+        "## 示例",
+        "",
+    ]
+    for title, record in [
+        ("pre repair 示例", pre_repair),
+        ("post hint 创建示例", post_hint),
+        ("hint followed/ignored 示例", applied_hint),
+    ]:
         lines.append(f"### {title}")
         lines.append("")
+        if record is None:
+            lines.append("本次没有出现该类事件。")
+            lines.append("")
+            continue
         lines.append("```json")
         lines.append(
             json.dumps(
@@ -696,12 +1066,14 @@ def render_llmverify_summary(metrics: dict[str, Any], trajectories: list[dict[st
                     "task_id": record.get("task_id"),
                     "step": record.get("step"),
                     "raw_action": record.get("raw_action"),
-                    "post_signal_summary": _post_signal_summary(record.get("post_check") or {}),
-                    "risk_verification": record.get("risk_verification"),
+                    "executed_action": record.get("executed_action"),
+                    "action_changed": record.get("action_changed"),
+                    "risk_verifications": record.get("risk_verifications"),
+                    "repair": record.get("repair"),
                 },
                 ensure_ascii=False,
                 indent=2,
-            )[:3000]
+            )[:4000]
         )
         lines.append("```")
         lines.append("")
@@ -719,34 +1091,22 @@ def _post_signal_summary(post_check: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _risk_verification_examples(trajectories: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
-    examples: list[tuple[str, dict[str, Any]]] = []
-    selectors = [
-        (
-            "is_error=true",
-            lambda verification: bool(verification.get("is_error")),
-        ),
-        (
-            "is_error=false",
-            lambda verification: bool(
-                verification.get("enabled")
-                and not verification.get("is_error")
-                and verification.get("parse_error") is None
-            ),
-        ),
-        (
-            "parse_error",
-            lambda verification: verification.get("parse_error") is not None,
-        ),
-    ]
-    for title, predicate in selectors:
-        record = _find_risk_verification_record(trajectories, predicate)
-        if record is not None:
-            examples.append((title, record))
-    return examples
+def _find_stage_verification_record(
+    trajectories: list[dict[str, Any]],
+    stage: str,
+    predicate: Any,
+) -> dict[str, Any] | None:
+    for trajectory in trajectories:
+        for step in trajectory.get("steps", []):
+            record = dict(step["action_record"])
+            record["task_id"] = trajectory.get("task_id")
+            verification = _stage_verification(record, stage)
+            if predicate(verification):
+                return record
+    return None
 
 
-def _find_risk_verification_record(
+def _find_repair_record(
     trajectories: list[dict[str, Any]],
     predicate: Any,
 ) -> dict[str, Any] | None:
@@ -754,8 +1114,8 @@ def _find_risk_verification_record(
         for step in trajectory.get("steps", []):
             record = dict(step["action_record"])
             record["task_id"] = trajectory.get("task_id")
-            verification = record.get("risk_verification") or {}
-            if predicate(verification):
+            repair = record.get("repair") or {}
+            if predicate(repair):
                 return record
     return None
 
