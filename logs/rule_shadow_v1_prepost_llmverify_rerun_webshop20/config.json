@@ -1,0 +1,18 @@
+{
+  "mode": "shadow",
+  "version": "rule_shadow_v1_llmverify",
+  "env": "OfficialWebShopEnv",
+  "requested_env": "official",
+  "num_samples": 20,
+  "start_index": 0,
+  "max_steps": 15,
+  "state_to_agent": false,
+  "repair_enabled": false,
+  "repair_hint_enabled": false,
+  "repair_hint_to_agent": false,
+  "llm_risk_verify_enabled": true,
+  "risk_verify_model": "qwen3-8b",
+  "risk_verify_recent_steps": 6,
+  "risk_verify_temperature": 0.0,
+  "model": "qwen3-8b"
+}
