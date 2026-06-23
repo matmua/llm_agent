@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
@@ -52,6 +53,7 @@ class WebShopReactAgent:
             "estimated_prompt_tokens": estimate_tokens(prompt),
             "estimated_response_tokens": estimate_tokens(response),
             "estimated_total_tokens": estimate_tokens(prompt) + estimate_tokens(response),
+            "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             "prompt_contains_state_summary": "Current task state summary:" in prompt,
             "prompt_contains_repair_hint": "Risk-control hint" in prompt,
             "prompt_excerpt": prompt[:4000],
@@ -68,7 +70,7 @@ class WebShopReactAgent:
         state_summary: str,
         repair_hint: str = "",
     ) -> str:
-        recent_history = action_history[-6:]
+        recent_history = [_agent_visible_history(item) for item in action_history[-6:]]
         clickables = available_actions.get("clickables", [])
         state_block = f"Current task state summary:\n{state_summary}\n" if state_summary else ""
         repair_block = f"{repair_hint}\n" if repair_hint else ""
@@ -85,6 +87,11 @@ class WebShopReactAgent:
             "Action: search[keywords]\n"
             "Action: click[value]"
         )
+
+
+def _agent_visible_history(item: dict[str, Any]) -> dict[str, Any]:
+    allowed_keys = ("step", "raw_action", "executed_action", "reward", "done")
+    return {key: item.get(key) for key in allowed_keys if key in item}
 
 
 def parse_action_from_response(response: str) -> str:

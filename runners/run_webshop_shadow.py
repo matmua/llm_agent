@@ -325,6 +325,7 @@ def _run_episode(
             "agent_prompt_contains_repair_hint": bool(
                 agent.last_trace.get("prompt_contains_repair_hint")
             ),
+            "agent_prompt_sha256": agent.last_trace.get("prompt_sha256"),
             "observation_before_hash": context_before,
             "observation_before": observation,
             "raw_action": raw_action,
@@ -344,7 +345,6 @@ def _run_episode(
                 "step": step,
                 "raw_action": raw_action,
                 "executed_action": executed_action,
-                "action_changed": executed_action != raw_action,
                 "reward": final_reward,
                 "done": done,
             }

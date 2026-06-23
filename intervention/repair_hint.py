@@ -40,12 +40,6 @@ def build_repair_hint(
 
 
 def format_hint_for_agent(repair_hint: dict[str, Any]) -> str:
-    stage = repair_hint.get("stage")
-    prefix = (
-        "[Risk-control hint for the current action only]"
-        if stage == "pre"
-        else "[Risk-control hint for the next action only]"
-    )
     error_type = repair_hint.get("error_type")
     avoid_action = repair_hint.get("avoid_action")
 
@@ -91,7 +85,7 @@ def format_hint_for_agent(repair_hint: dict[str, Any]) -> str:
             "Output only the action in the required format."
         )
 
-    return f"{prefix}\n{body}"
+    return f"Risk-control hint for this action:\n{body}"
 
 
 def mark_hint_outcome(pending_hint: dict[str, Any], next_raw_action: str) -> dict[str, Any]:
@@ -102,4 +96,3 @@ def mark_hint_outcome(pending_hint: dict[str, Any], next_raw_action: str) -> dic
         "avoid_action": pending_hint.get("avoid_action"),
         "matched_action": avoid_action,
     }
-

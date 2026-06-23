@@ -1,6 +1,7 @@
 import json
 from argparse import Namespace
 
+from agents.react_agent import WebShopReactAgent
 from runners.run_webshop_shadow import build_trajectory_risk_summary, run
 from shadow.extractor import extract_observation_attributes
 from shadow.parser import action_signature, parse_action
@@ -307,3 +308,120 @@ def test_mock_runner_keeps_state_out_of_agent_and_actions_unchanged(tmp_path):
                 "context_changed",
                 "new_context",
             }
+
+
+def test_agent_prompt_filters_internal_history_fields():
+    prompt = WebShopReactAgent._build_prompt(
+        task_instruction="Instruction: find a mug",
+        observation="Search page",
+        available_actions={"has_search_bar": True, "clickables": ["Mug", "buy now"]},
+        state_summary="",
+        repair_hint="",
+        action_history=[
+            {
+                "step": 0,
+                "raw_action": "search[mug]",
+                "executed_action": "search[mug]",
+                "action_changed": False,
+                "pre_check": {"format_valid": True},
+                "post_check": {"info_gain": True},
+                "risk_verifications": {"post": {"is_error": True}},
+                "repair": {"post_hint_created": True},
+                "repair_hint": "hidden",
+                "visible_delta": True,
+                "no_progress": False,
+                "repeated_behavior_risk": False,
+                "confidence": 0.99,
+                "is_error": True,
+                "reward": 0.0,
+                "done": False,
+            }
+        ],
+    )
+    assert "Recent action history:" in prompt
+    assert "raw_action" in prompt
+    assert "executed_action" in prompt
+    assert "reward" in prompt
+    assert "done" in prompt
+    forbidden = [
+        "action_changed",
+        "pre_check",
+        "post_check",
+        "risk_verifications",
+        "repair",
+        "repair_hint",
+        "visible_delta",
+        "no_progress",
+        "repeated_behavior_risk",
+        "confidence",
+        "is_error",
+        "hidden",
+    ]
+    for item in forbidden:
+        assert item not in prompt
+
+
+def test_verify_only_and_baseline_prompts_are_identical_without_repair_hint():
+    history = [
+        {
+            "step": 0,
+            "raw_action": "search[mug]",
+            "executed_action": "search[mug]",
+            "reward": 0.0,
+            "done": False,
+        }
+    ]
+    baseline_prompt = WebShopReactAgent._build_prompt(
+        task_instruction="Instruction: find a mug",
+        observation="Search results",
+        available_actions={"has_search_bar": True, "clickables": ["Mug"]},
+        state_summary="",
+        repair_hint="",
+        action_history=history,
+    )
+    verify_only_prompt = WebShopReactAgent._build_prompt(
+        task_instruction="Instruction: find a mug",
+        observation="Search results",
+        available_actions={"has_search_bar": True, "clickables": ["Mug"]},
+        state_summary="",
+        repair_hint="",
+        action_history=[
+            {
+                **history[0],
+                "action_changed": False,
+                "risk_verifications": {"post": {"is_error": True}},
+                "repair": {"post_hint_created": False},
+            }
+        ],
+    )
+    assert baseline_prompt == verify_only_prompt
+    assert "Risk-control hint" not in baseline_prompt
+    assert "Current task state summary" not in baseline_prompt
+
+
+def test_repair_hint_is_plain_text_block_not_history_field():
+    prompt = WebShopReactAgent._build_prompt(
+        task_instruction="Instruction: find a mug",
+        observation="Search results",
+        available_actions={"has_search_bar": True, "clickables": ["Mug", "back to search"]},
+        state_summary="",
+        repair_hint=(
+            "Risk-control hint for this action:\n"
+            "The previous behavior was verified as repetitive. Avoid repeating click[next >]."
+        ),
+        action_history=[
+            {
+                "step": 0,
+                "raw_action": "click[next >]",
+                "executed_action": "click[next >]",
+                "reward": 0.0,
+                "done": False,
+            }
+        ],
+    )
+    assert "Risk-control hint for this action:" in prompt
+    hint_index = prompt.index("Risk-control hint for this action:")
+    history_index = prompt.index("Recent action history:")
+    assert hint_index < history_index
+    assert '"repair_hint"' not in prompt
+    assert "'repair_hint'" not in prompt

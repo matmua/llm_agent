@@ -25,8 +25,11 @@ def test_repair_hint_decisions_and_loop_template():
 
     hint = build_repair_hint(verification, "post", record)
     prompt = format_hint_for_agent(hint)
-    assert "[Risk-control hint for the next action only]" in prompt
+    assert prompt.startswith("Risk-control hint for this action:\n")
     assert "Avoid repeating this action: click[next >]." in prompt
+    assert '"repair_hint"' not in prompt
+    assert "error_type" not in prompt
+    assert "confidence" not in prompt
     assert mark_hint_outcome(hint, "click[next >]")["followed"] is False
     assert mark_hint_outcome(hint, "click[item]")["followed"] is True
 
@@ -45,8 +48,7 @@ def test_repair_hint_without_avoid_action_uses_strategy_template():
     }
     hint = build_repair_hint(verification, "pre", record)
     prompt = format_hint_for_agent(hint)
-    assert "[Risk-control hint for the current action only]" in prompt
+    assert prompt.startswith("Risk-control hint for this action:\n")
     assert "Do not continue the same strategy." in prompt
     assert "Avoid repeating this action" not in prompt
     assert mark_hint_outcome(hint, "click[item]")["followed"] is False
-

@@ -35,9 +35,16 @@ logs/*
 !logs/rule_shadow_v1_prepost_llmverify_rerun_webshop20/**
 !logs/rule_shadow_v1_hintrepair_rerun_webshop20/
 !logs/rule_shadow_v1_hintrepair_rerun_webshop20/**
+!logs/rule_shadow_v1_baseline_promptfix_webshop20/
+!logs/rule_shadow_v1_baseline_promptfix_webshop20/**
+!logs/rule_shadow_v1_prepost_llmverify_promptfix_webshop20/
+!logs/rule_shadow_v1_prepost_llmverify_promptfix_webshop20/**
+!logs/rule_shadow_v1_hintrepair_promptfix_webshop20/
+!logs/rule_shadow_v1_hintrepair_promptfix_webshop20/**
 reports/*
 !reports/webshop20_rerun_comparison_zh.md
 !reports/webshop20_shadow_drop_repair_audit_zh.md
+!reports/webshop20_promptfix_recovery_report_zh.md
 !reports/rule_shadow_v1_webshop20/
 !reports/rule_shadow_v1_webshop20/**
 !reports/rule_shadow_v1_repeat_webshop20/
@@ -56,6 +63,12 @@ reports/*
 !reports/rule_shadow_v1_prepost_llmverify_rerun_webshop20/**
 !reports/rule_shadow_v1_hintrepair_rerun_webshop20/
 !reports/rule_shadow_v1_hintrepair_rerun_webshop20/**
+!reports/rule_shadow_v1_baseline_promptfix_webshop20/
+!reports/rule_shadow_v1_baseline_promptfix_webshop20/**
+!reports/rule_shadow_v1_prepost_llmverify_promptfix_webshop20/
+!reports/rule_shadow_v1_prepost_llmverify_promptfix_webshop20/**
+!reports/rule_shadow_v1_hintrepair_promptfix_webshop20/
+!reports/rule_shadow_v1_hintrepair_promptfix_webshop20/**
 
 # Python/cache noise
 __pycache__/
