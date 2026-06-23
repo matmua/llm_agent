@@ -11,8 +11,8 @@
   "repair_hint_enabled": true,
   "repair_hint_to_agent": true,
   "llm_risk_verify_enabled": true,
-  "risk_verify_model": "",
+  "risk_verify_model": "qwen3-8b",
   "risk_verify_recent_steps": 6,
   "risk_verify_temperature": 0.0,
-  "model": "mock"
+  "model": "qwen3-8b"
 }

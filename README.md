@@ -58,15 +58,16 @@ Start a local OpenAI-compatible model endpoint, then run verify-only mode:
   export JAVA_HOME=/root/miniconda3/envs/webshop
   export JVM_PATH=/root/miniconda3/envs/webshop/lib/jvm/lib/server/libjvm.so
   set -a; [ -f .env ] && source .env; set +a
+  MODEL_NAME="${LLM_MODEL:-$QWEN_MODEL}"
   /root/miniconda3/envs/webshop/bin/python -m runners.run_webshop_shadow \
     --env official \
     --num_samples 20 \
     --start_index 0 \
     --max_steps 15 \
-    --model "$LLM_MODEL" \
+    --model "$MODEL_NAME" \
     --state_to_agent false \
     --llm_risk_verify \
-    --risk_verify_model "$LLM_MODEL" \
+    --risk_verify_model "$MODEL_NAME" \
     --repair_hint_enabled false \
     --log_dir logs/rule_shadow_v1_prepost_llmverify_webshop20 \
     --report_dir reports/rule_shadow_v1_prepost_llmverify_webshop20
@@ -81,15 +82,16 @@ Lightweight hint-repair mode:
   export JAVA_HOME=/root/miniconda3/envs/webshop
   export JVM_PATH=/root/miniconda3/envs/webshop/lib/jvm/lib/server/libjvm.so
   set -a; [ -f .env ] && source .env; set +a
+  MODEL_NAME="${LLM_MODEL:-$QWEN_MODEL}"
   /root/miniconda3/envs/webshop/bin/python -m runners.run_webshop_shadow \
     --env official \
     --num_samples 20 \
     --start_index 0 \
     --max_steps 15 \
-    --model "$LLM_MODEL" \
+    --model "$MODEL_NAME" \
     --state_to_agent false \
     --llm_risk_verify \
-    --risk_verify_model "$LLM_MODEL" \
+    --risk_verify_model "$MODEL_NAME" \
     --repair_hint_enabled true \
     --log_dir logs/rule_shadow_v1_hintrepair_webshop20 \
     --report_dir reports/rule_shadow_v1_hintrepair_webshop20

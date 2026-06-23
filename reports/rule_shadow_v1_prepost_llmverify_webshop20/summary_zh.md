@@ -15,34 +15,34 @@
 
 - 样本数：20
 - 最大步数：15
-- action 数：60
-- success：13 / 20 = 0.6500
+- action 数：181
+- success：11 / 20 = 0.5500
 - llm_risk_verify_enabled：True
 - repair_hint_enabled：False
 - repair_hint_to_agent：False
-- pre_rule_risk_trigger_action_count：0
-- post_rule_risk_trigger_action_count：0
-- pre_llm_called_action_count：0
-- post_llm_called_action_count：0
+- pre_rule_risk_trigger_action_count：3
+- post_rule_risk_trigger_action_count：58
+- pre_llm_called_action_count：3
+- post_llm_called_action_count：58
 - pre_llm_parse_error_count：0
 - post_llm_parse_error_count：0
 - pre_llm_is_error_action_count：0
-- post_llm_is_error_action_count：0
-- rule_risk_trigger_action_count：0
-- llm_called_action_count：0
+- post_llm_is_error_action_count：58
+- rule_risk_trigger_action_count：61
+- llm_called_action_count：61
 - llm_parse_error_count：0
-- llm_is_error_action_count：0
-- llm_error_type_counts：{"evidence_guessing": 0, "format_error": 0, "loop_or_repetition": 0, "wrong_action_or_param": 0, "none": 0}
-- rule_risk_sample_count：0
-- llm_verified_error_sample_count：0
-- failed_samples_with_rule_risk：0 / 7
-- failed_samples_with_llm_verified_error：0 / 7
-- failed_llm_verified_recall：0.0000
-- successful_samples_with_rule_risk：0 / 13
-- successful_samples_with_llm_verified_error：0 / 13
-- successful_llm_verified_rate：0.0000
-- avg_first_rule_risk_step_failed：None
-- avg_first_llm_verified_error_step_failed：None
+- llm_is_error_action_count：58
+- llm_error_type_counts：{"evidence_guessing": 0, "format_error": 0, "loop_or_repetition": 58, "wrong_action_or_param": 0, "none": 3}
+- rule_risk_sample_count：8
+- llm_verified_error_sample_count：8
+- failed_samples_with_rule_risk：7 / 9
+- failed_samples_with_llm_verified_error：7 / 9
+- failed_llm_verified_recall：0.7778
+- successful_samples_with_rule_risk：1 / 11
+- successful_samples_with_llm_verified_error：1 / 11
+- successful_llm_verified_rate：0.0909
+- avg_first_rule_risk_step_failed：5.857142857142857
+- avg_first_llm_verified_error_step_failed：5.857142857142857
 - state_prompt_leak_count：0
 - action_changed_count：0
 
@@ -59,8 +59,57 @@
 
 ### pre verification 示例
 
-本次 20 条轨迹没有触发 pre verifier。
+```json
+{
+  "task_id": 9,
+  "step": 6,
+  "raw_action": "click[value]",
+  "pre_check": {
+    "format_valid": true,
+    "repeat_known_no_info": true
+  },
+  "risk_verification": {
+    "enabled": true,
+    "triggered": true,
+    "called": true,
+    "is_error": false,
+    "error_type": "none",
+    "confidence": 0.95,
+    "repair_hint": "",
+    "avoid_action": null,
+    "raw_response": "{\n  \"is_error\": false,\n  \"error_type\": \"none\",\n  \"confidence\": 0.95,\n  \"repair_hint\": \"\",\n  \"avoid_action\": null\n}",
+    "parse_error": null
+  }
+}
+```
 
 ### post verification 示例
 
-本次 20 条轨迹没有触发 post verifier。
+```json
+{
+  "task_id": 3,
+  "step": 5,
+  "raw_action": "click[next >]",
+  "executed_action": "click[next >]",
+  "post_signal_summary": {
+    "visible_delta": true,
+    "no_progress": false,
+    "no_progress_reason": null,
+    "context_cycle_detected": false,
+    "same_action_signature_streak": 5,
+    "repeated_behavior_risk": true
+  },
+  "risk_verification": {
+    "enabled": true,
+    "triggered": true,
+    "called": true,
+    "is_error": true,
+    "error_type": "loop_or_repetition",
+    "confidence": 0.95,
+    "repair_hint": "Consider changing the action to navigate to a different page or refine the search query.",
+    "avoid_action": "click[next >]",
+    "raw_response": "{\n  \"is_error\": true,\n  \"error_type\": \"loop_or_repetition\",\n  \"confidence\": 0.95,\n  \"repair_hint\": \"Consider changing the action to navigate to a different page or refine the search query.\",\n  \"avoid_action\": \"click[next >]\"\n}",
+    "parse_error": null
+  }
+}
+```
