@@ -22,6 +22,8 @@ agent prompt.
 - `shadow/pre.py`: format and repeated no-info pre check.
 - `shadow/post.py`: post-action visible-delta, no-progress, and trajectory-risk checks.
 - `shadow/repair.py`: no-op repair placeholder.
+- `intervention/risk_verifier.py`: optional LLM verifier for rule-triggered risks; records only.
+- `intervention/prompts.py`: fixed LLM verifier prompt.
 - `runners/webshop_env.py`: official/mock WebShop environment adapter.
 - `agents/`: ReAct agent and OpenAI-compatible/mock client.
 
@@ -60,8 +62,10 @@ Start a local OpenAI-compatible model endpoint, then run:
     --max_steps 15 \
     --model "$LLM_MODEL" \
     --state_to_agent false \
-    --log_dir logs/rule_shadow_v1_trajrisk_webshop20 \
-    --report_dir reports/rule_shadow_v1_trajrisk_webshop20
+    --llm_risk_verify \
+    --risk_verify_model "$LLM_MODEL" \
+    --log_dir logs/rule_shadow_v1_llmverify_webshop20 \
+    --report_dir reports/rule_shadow_v1_llmverify_webshop20
 '
 ```
 
@@ -81,6 +85,9 @@ Mock smoke run:
 - `logs/rule_shadow_v1_trajrisk_webshop20/trajectories.jsonl`
 - `reports/rule_shadow_v1_trajrisk_webshop20/metrics.json`
 - `reports/rule_shadow_v1_trajrisk_webshop20/summary_zh.md`
+- `logs/rule_shadow_v1_llmverify_webshop20/trajectories.jsonl`
+- `reports/rule_shadow_v1_llmverify_webshop20/metrics.json`
+- `reports/rule_shadow_v1_llmverify_webshop20/summary_zh.md`
 - `logs/rule_shadow_v1_repeat_webshop20/trajectories.jsonl`
 - `reports/rule_shadow_v1_repeat_webshop20/metrics.json`
 - `reports/rule_shadow_v1_repeat_webshop20/summary_zh.md`

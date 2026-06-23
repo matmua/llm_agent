@@ -242,6 +242,10 @@ def test_mock_runner_keeps_state_out_of_agent_and_actions_unchanged(tmp_path):
             max_steps=5,
             model="mock",
             state_to_agent="false",
+            llm_risk_verify="false",
+            risk_verify_model="",
+            risk_verify_recent_steps=6,
+            risk_verify_temperature=0.0,
             log_dir=str(tmp_path / "logs"),
             report_dir=str(tmp_path / "reports"),
         )
@@ -265,6 +269,18 @@ def test_mock_runner_keeps_state_out_of_agent_and_actions_unchanged(tmp_path):
             record = step["action_record"]
             assert record["executed_action"] == record["raw"]
             assert record["raw_action"] == record["raw"]
+            assert record["risk_verification"] == {
+                "enabled": False,
+                "triggered": False,
+                "called": False,
+                "is_error": False,
+                "error_type": "none",
+                "confidence": 0.0,
+                "repair_hint": "",
+                "avoid_action": None,
+                "raw_response": None,
+                "parse_error": None,
+            }
             assert set(record["pre_check"]) == {"format_valid", "repeat_known_no_info"}
             assert set(record["post_check"]) == {
                 "visible_delta",

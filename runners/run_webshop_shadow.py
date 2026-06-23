@@ -15,6 +15,7 @@ from typing import Any
 
 from agents.llm_client import MockLLMClient, OpenAIChatClient
 from agents.react_agent import WebShopReactAgent
+from intervention.risk_verifier import verify_risk_if_triggered
 from runners.webshop_env import make_webshop_env
 from shadow.extractor import (
     context_value,
@@ -50,8 +51,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_steps", type=int, default=15)
     parser.add_argument("--model", default=os.getenv("LLM_MODEL") or os.getenv("QWEN_MODEL") or "mock")
     parser.add_argument("--state_to_agent", default="false")
-    parser.add_argument("--log_dir", default="logs/rule_shadow_v1_trajrisk_webshop20")
-    parser.add_argument("--report_dir", default="reports/rule_shadow_v1_trajrisk_webshop20")
+    parser.add_argument("--llm_risk_verify", nargs="?", const="true", default="false")
+    parser.add_argument(
+        "--risk_verify_model",
+        default=(
+            os.getenv("RISK_VERIFY_MODEL")
+            or os.getenv("LLM_MODEL")
+            or os.getenv("QWEN_MODEL")
+            or ""
+        ),
+    )
+    parser.add_argument("--risk_verify_recent_steps", type=int, default=6)
+    parser.add_argument("--risk_verify_temperature", type=float, default=0.0)
+    parser.add_argument("--log_dir", default="logs/rule_shadow_v1_llmverify_webshop20")
+    parser.add_argument("--report_dir", default="reports/rule_shadow_v1_llmverify_webshop20")
     return parser.parse_args()
 
 
@@ -60,6 +73,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("rule_shadow_v1 requires --state_to_agent false")
     env = make_webshop_env(args.env, repo_path=args.webshop_repo, num_products=args.num_products)
     agent = WebShopReactAgent(_build_client(args.model))
+    llm_risk_verify_enabled = _parse_bool(getattr(args, "llm_risk_verify", "false"))
+    risk_client = _build_risk_client(getattr(args, "risk_verify_model", "")) if llm_risk_verify_enabled else None
     log_dir = Path(args.log_dir)
     report_dir = Path(args.report_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -67,7 +82,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     config = {
         "mode": "shadow",
-        "version": "rule_shadow_v1_trajrisk",
+        "version": "rule_shadow_v1_llmverify",
         "env": env.env_name,
         "requested_env": args.env,
         "num_samples": args.num_samples,
@@ -75,6 +90,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "max_steps": args.max_steps,
         "state_to_agent": False,
         "repair_enabled": False,
+        "llm_risk_verify_enabled": llm_risk_verify_enabled,
+        "risk_verify_model": getattr(risk_client, "model", getattr(args, "risk_verify_model", "")),
+        "risk_verify_recent_steps": getattr(args, "risk_verify_recent_steps", 6),
+        "risk_verify_temperature": getattr(args, "risk_verify_temperature", 0.0),
         "model": getattr(agent.client, "model", args.model),
     }
     _write_json(log_dir / "config.json", config)
@@ -88,6 +107,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 agent=agent,
                 task_id=task_id,
                 max_steps=args.max_steps,
+                llm_risk_verify_enabled=llm_risk_verify_enabled,
+                risk_client=risk_client,
+                risk_verify_recent_steps=getattr(args, "risk_verify_recent_steps", 6),
+                risk_verify_temperature=getattr(args, "risk_verify_temperature", 0.0),
             )
             trajectories.append(trajectory)
             fh.write(json.dumps(trajectory, ensure_ascii=True) + "\n")
@@ -111,6 +134,10 @@ def _run_episode(
     agent: WebShopReactAgent,
     task_id: int,
     max_steps: int,
+    llm_risk_verify_enabled: bool = False,
+    risk_client: Any = None,
+    risk_verify_recent_steps: int = 6,
+    risk_verify_temperature: float = 0.0,
 ) -> dict[str, Any]:
     observation = env.reset(task_id)
     instruction = env.get_instruction_text()
@@ -167,6 +194,17 @@ def _run_episode(
             context_after=str(observed_after["context.current"]["current_value"]),
         )
         action_record["post_check"] = post_check
+        action_record["risk_verification"] = verify_risk_if_triggered(
+            action_record=action_record,
+            shadow_state=shadow_state,
+            task=instruction,
+            current_observation=observation_after,
+            available_actions=available_after,
+            enabled=llm_risk_verify_enabled,
+            client=risk_client,
+            max_recent_steps=risk_verify_recent_steps,
+            temperature=risk_verify_temperature,
+        )
         merge_attributes(shadow_state, observed_after)
         shadow_state["actions"].append(action_record)
 
@@ -234,11 +272,29 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
     summaries = [item.get("trajectory_risk_summary") or {} for item in trajectories]
     successful_summaries = [item.get("trajectory_risk_summary") or {} for item in successful]
     failed_summaries = [item.get("trajectory_risk_summary") or {} for item in failed]
+    llm_error_type_counts = {
+        "evidence_guessing": 0,
+        "format_error": 0,
+        "loop_or_repetition": 0,
+        "wrong_action_or_param": 0,
+        "none": 0,
+    }
+    for record in action_records:
+        verification = record.get("risk_verification") or {}
+        if not verification.get("called") or verification.get("parse_error"):
+            continue
+        error_type = verification.get("error_type", "none")
+        if error_type in llm_error_type_counts:
+            llm_error_type_counts[error_type] += 1
     return {
         "num_samples": num_samples,
         "max_steps": max_steps,
         "state_to_agent": False,
         "repair_enabled": False,
+        "llm_risk_verify_enabled": any(
+            (record.get("risk_verification") or {}).get("enabled")
+            for record in action_records
+        ),
         "num_actions": len(action_records),
         "format_invalid_count": sum(
             1 for item in action_records if not item.get("pre_check", {}).get("format_valid")
@@ -278,6 +334,27 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
             for item in action_records
             if item.get("post_check", {}).get("repeated_behavior_risk")
         ),
+        "rule_risk_trigger_action_count": sum(
+            1
+            for item in action_records
+            if (item.get("risk_verification") or {}).get("triggered")
+        ),
+        "llm_called_action_count": sum(
+            1
+            for item in action_records
+            if (item.get("risk_verification") or {}).get("called")
+        ),
+        "llm_parse_error_count": sum(
+            1
+            for item in action_records
+            if (item.get("risk_verification") or {}).get("parse_error")
+        ),
+        "llm_is_error_action_count": sum(
+            1
+            for item in action_records
+            if (item.get("risk_verification") or {}).get("is_error")
+        ),
+        "llm_error_type_counts": llm_error_type_counts,
         "info_gain_true_count": sum(
             1 for item in action_records if item.get("post_check", {}).get("info_gain")
         ),
@@ -291,6 +368,10 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
         "avg_reward": float(mean([item.get("reward", 0.0) for item in trajectories])) if trajectories else 0.0,
         "avg_steps": float(mean([item.get("num_steps", 0) for item in trajectories])) if trajectories else 0.0,
         "trajectory_risk_sample_count": sum(1 for item in summaries if item.get("has_any_risk")),
+        "rule_risk_sample_count": sum(1 for item in summaries if item.get("has_any_rule_risk")),
+        "llm_verified_error_sample_count": sum(
+            1 for item in summaries if item.get("has_llm_verified_error")
+        ),
         "action_no_progress_sample_count": sum(
             1 for item in summaries if item.get("has_action_no_progress")
         ),
@@ -302,6 +383,12 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
         ),
         "failed_samples": len(failed),
         "failed_samples_with_any_risk": sum(1 for item in failed_summaries if item.get("has_any_risk")),
+        "failed_samples_with_rule_risk": sum(
+            1 for item in failed_summaries if item.get("has_any_rule_risk")
+        ),
+        "failed_samples_with_llm_verified_error": sum(
+            1 for item in failed_summaries if item.get("has_llm_verified_error")
+        ),
         "failed_samples_with_action_no_progress": sum(
             1 for item in failed_summaries if item.get("has_action_no_progress")
         ),
@@ -315,9 +402,19 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
             sum(1 for item in failed_summaries if item.get("has_any_risk")),
             len(failed),
         ),
+        "failed_llm_verified_recall": _safe_rate(
+            sum(1 for item in failed_summaries if item.get("has_llm_verified_error")),
+            len(failed),
+        ),
         "successful_samples": len(successful),
         "successful_samples_with_any_risk": sum(
             1 for item in successful_summaries if item.get("has_any_risk")
+        ),
+        "successful_samples_with_rule_risk": sum(
+            1 for item in successful_summaries if item.get("has_any_rule_risk")
+        ),
+        "successful_samples_with_llm_verified_error": sum(
+            1 for item in successful_summaries if item.get("has_llm_verified_error")
         ),
         "successful_samples_with_action_no_progress": sum(
             1 for item in successful_summaries if item.get("has_action_no_progress")
@@ -332,8 +429,18 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
             sum(1 for item in successful_summaries if item.get("has_any_risk")),
             len(successful),
         ),
+        "successful_llm_verified_rate": _safe_rate(
+            sum(1 for item in successful_summaries if item.get("has_llm_verified_error")),
+            len(successful),
+        ),
         "avg_first_any_risk_step_failed": _avg_present(
             item.get("first_any_risk_step") for item in failed_summaries
+        ),
+        "avg_first_rule_risk_step_failed": _avg_present(
+            item.get("first_rule_risk_step") for item in failed_summaries
+        ),
+        "avg_first_llm_verified_error_step_failed": _avg_present(
+            item.get("first_llm_verified_error_step") for item in failed_summaries
         ),
         "avg_first_repeated_behavior_risk_step_failed": _avg_present(
             item.get("first_repeated_behavior_risk_step") for item in failed_summaries
@@ -354,9 +461,11 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
 
 def build_trajectory_risk_summary(steps: list[dict[str, Any]]) -> dict[str, Any]:
     risk_events: list[dict[str, Any]] = []
+    llm_verified_error_events: list[dict[str, Any]] = []
     for step in steps:
         record = step.get("action_record") or {}
         post = record.get("post_check") or {}
+        verification = record.get("risk_verification") or {}
         step_id = int(record.get("step", step.get("step", 0)))
         if post.get("no_progress"):
             risk_events.append(
@@ -389,22 +498,43 @@ def build_trajectory_risk_summary(steps: list[dict[str, Any]]) -> dict[str, Any]
                     "reason": post.get("no_progress_reason"),
                 }
             )
+        if verification.get("is_error"):
+            llm_verified_error_events.append(
+                {
+                    "step": step_id,
+                    "error_type": verification.get("error_type"),
+                    "confidence": verification.get("confidence"),
+                    "avoid_action": verification.get("avoid_action"),
+                    "repair_hint": verification.get("repair_hint"),
+                    "action_signature": record.get("action_signature"),
+                }
+            )
 
     first_no_progress = _first_event_step(risk_events, "action_no_progress")
     first_repeated = _first_event_step(risk_events, "repeated_behavior_risk")
     first_context_cycle = _first_event_step(risk_events, "context_cycle_risk")
+    first_any_rule = min((int(item["step"]) for item in risk_events), default=None)
+    first_llm_verified = min(
+        (int(item["step"]) for item in llm_verified_error_events),
+        default=None,
+    )
     present_risk_types = sorted({str(item["type"]) for item in risk_events})
     return {
         "has_action_no_progress": first_no_progress is not None,
         "has_repeated_behavior_risk": first_repeated is not None,
         "has_context_cycle_risk": first_context_cycle is not None,
         "has_any_risk": bool(risk_events),
+        "has_any_rule_risk": bool(risk_events),
+        "has_llm_verified_error": first_llm_verified is not None,
         "first_no_progress_step": first_no_progress,
         "first_repeated_behavior_risk_step": first_repeated,
         "first_context_cycle_step": first_context_cycle,
-        "first_any_risk_step": min((int(item["step"]) for item in risk_events), default=None),
+        "first_any_risk_step": first_any_rule,
+        "first_rule_risk_step": first_any_rule,
+        "first_llm_verified_error_step": first_llm_verified,
         "risk_types": present_risk_types,
         "risk_events": risk_events,
+        "llm_verified_error_events": llm_verified_error_events,
     }
 
 
@@ -427,6 +557,8 @@ def _avg_present(values: Any) -> float | None:
 
 
 def render_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) -> str:
+    if metrics.get("llm_risk_verify_enabled"):
+        return render_llmverify_summary(metrics, trajectories)
     examples = _example_records(trajectories)
     lines = [
         "# rule-based shadow v1 trajrisk WebShop20 报告",
@@ -499,6 +631,133 @@ def render_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) 
         lines.append("```")
         lines.append("")
     return "\n".join(lines)
+
+
+def render_llmverify_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) -> str:
+    examples = _risk_verification_examples(trajectories)
+    lines = [
+        "# rule-based shadow v1 LLM Risk Verifier WebShop20 报告",
+        "",
+        "本次新增独立 LLM Risk Verifier 模块。",
+        "",
+        "- LLM verifier 只在规则风险触发后调用。",
+        "- LLM verifier 不修改 action。",
+        "- LLM verifier 不执行修复。",
+        "- shadow state 没有注入 agent。",
+        "- `repair_hint` 和 `avoid_action` 本次只记录，不使用。",
+        "- 不确定一律判为 `is_error=false`。",
+        "- verifier 只判断四类错误：evidence_guessing、format_error、loop_or_repetition、wrong_action_or_param。",
+        "- verifier 输出只接受五个字段：is_error、error_type、confidence、repair_hint、avoid_action。",
+        "",
+        "## 统计结果",
+        "",
+        f"- 样本数：{metrics['num_samples']}",
+        f"- 最大步数：{metrics['max_steps']}",
+        f"- action 数：{metrics['num_actions']}",
+        f"- success：{metrics['success_count']} / {metrics['num_samples']} = {metrics['success_rate']:.4f}",
+        f"- llm_risk_verify_enabled：{metrics['llm_risk_verify_enabled']}",
+        f"- rule_risk_trigger_action_count：{metrics['rule_risk_trigger_action_count']}",
+        f"- llm_called_action_count：{metrics['llm_called_action_count']}",
+        f"- llm_parse_error_count：{metrics['llm_parse_error_count']}",
+        f"- llm_is_error_action_count：{metrics['llm_is_error_action_count']}",
+        f"- llm_error_type_counts：{json.dumps(metrics['llm_error_type_counts'], ensure_ascii=False)}",
+        f"- rule_risk_sample_count：{metrics['rule_risk_sample_count']}",
+        f"- llm_verified_error_sample_count：{metrics['llm_verified_error_sample_count']}",
+        f"- failed_samples_with_rule_risk：{metrics['failed_samples_with_rule_risk']} / {metrics['failed_samples']}",
+        f"- failed_samples_with_llm_verified_error：{metrics['failed_samples_with_llm_verified_error']} / {metrics['failed_samples']}",
+        f"- failed_llm_verified_recall：{metrics['failed_llm_verified_recall']:.4f}",
+        f"- successful_samples_with_rule_risk：{metrics['successful_samples_with_rule_risk']} / {metrics['successful_samples']}",
+        f"- successful_samples_with_llm_verified_error：{metrics['successful_samples_with_llm_verified_error']} / {metrics['successful_samples']}",
+        f"- successful_llm_verified_rate：{metrics['successful_llm_verified_rate']:.4f}",
+        f"- avg_first_rule_risk_step_failed：{metrics['avg_first_rule_risk_step_failed']}",
+        f"- avg_first_llm_verified_error_step_failed：{metrics['avg_first_llm_verified_error_step_failed']}",
+        f"- state_prompt_leak_count：{metrics['state_prompt_leak_count']}",
+        f"- action_changed_count：{metrics['action_changed_count']}",
+        "",
+        "## 最终检查",
+        "",
+        "- 运行命令：`python -m runners.run_webshop_shadow --env official --num_samples 20 --start_index 0 --max_steps 15 --model qwen3-8b --state_to_agent false --llm_risk_verify --risk_verify_model qwen3-8b --log_dir logs/rule_shadow_v1_llmverify_webshop20 --report_dir reports/rule_shadow_v1_llmverify_webshop20`",
+        "- 活跃 verifier 模块：`intervention/risk_verifier.py`。",
+        "- 活跃 verifier prompt：`intervention/prompts.py`。",
+        "- `state_to_agent=false`，日志中 `state_prompt_leak_count=0`。",
+        "- `executed_action == raw_action`，日志中 `action_changed_count=0`。",
+        "- `repair_placeholder.enabled=false`，没有触发修复、阻断、回滚或 action 改写。",
+        "",
+        "## risk_verification 示例",
+        "",
+    ]
+    for title, record in examples:
+        lines.append(f"### {title}")
+        lines.append("")
+        lines.append("```json")
+        lines.append(
+            json.dumps(
+                {
+                    "task_id": record.get("task_id"),
+                    "step": record.get("step"),
+                    "raw_action": record.get("raw_action"),
+                    "post_signal_summary": _post_signal_summary(record.get("post_check") or {}),
+                    "risk_verification": record.get("risk_verification"),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )[:3000]
+        )
+        lines.append("```")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _post_signal_summary(post_check: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "visible_delta": post_check.get("visible_delta"),
+        "no_progress": post_check.get("no_progress"),
+        "no_progress_reason": post_check.get("no_progress_reason"),
+        "context_cycle_detected": post_check.get("context_cycle_detected"),
+        "same_action_signature_streak": post_check.get("same_action_signature_streak"),
+        "repeated_behavior_risk": post_check.get("repeated_behavior_risk"),
+    }
+
+
+def _risk_verification_examples(trajectories: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
+    examples: list[tuple[str, dict[str, Any]]] = []
+    selectors = [
+        (
+            "is_error=true",
+            lambda verification: bool(verification.get("is_error")),
+        ),
+        (
+            "is_error=false",
+            lambda verification: bool(
+                verification.get("enabled")
+                and not verification.get("is_error")
+                and verification.get("parse_error") is None
+            ),
+        ),
+        (
+            "parse_error",
+            lambda verification: verification.get("parse_error") is not None,
+        ),
+    ]
+    for title, predicate in selectors:
+        record = _find_risk_verification_record(trajectories, predicate)
+        if record is not None:
+            examples.append((title, record))
+    return examples
+
+
+def _find_risk_verification_record(
+    trajectories: list[dict[str, Any]],
+    predicate: Any,
+) -> dict[str, Any] | None:
+    for trajectory in trajectories:
+        for step in trajectory.get("steps", []):
+            record = dict(step["action_record"])
+            record["task_id"] = trajectory.get("task_id")
+            verification = record.get("risk_verification") or {}
+            if predicate(verification):
+                return record
+    return None
 
 
 def render_manual_audit(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) -> str:
@@ -598,6 +857,15 @@ def _build_client(model: str):
     if not model or model == "mock":
         return MockLLMClient()
     return OpenAIChatClient.from_env(model=model)
+
+
+def _build_risk_client(model: str):
+    if not model or model == "mock":
+        return None
+    try:
+        return OpenAIChatClient.from_env(model=model)
+    except ValueError:
+        return None
 
 
 def _parse_bool(value: Any) -> bool:
