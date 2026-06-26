@@ -34,7 +34,7 @@ from shadow.extractor import (
     extract_task_attributes,
 )
 from shadow.parser import action_signature, parse_action
-from shadow.post import run_post_check
+from shadow.post import REPEATED_BEHAVIOR_RISK_STREAK, run_post_check
 from shadow.pre import run_pre_check
 from shadow.state import (
     attributes_summary,
@@ -442,6 +442,7 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
         "llm_risk_verify_enabled": any(
             verification.get("enabled") for verification in verifications
         ),
+        "repeated_behavior_risk_threshold": REPEATED_BEHAVIOR_RISK_STREAK,
         "num_actions": len(action_records),
         "format_invalid_count": sum(
             1 for item in action_records if not item.get("pre_check", {}).get("format_valid")
@@ -811,7 +812,7 @@ def render_summary(metrics: dict[str, Any], trajectories: list[dict[str, Any]]) 
         "- 没有阻断、回滚或 action 改写。",
         "- 没有加入 WebShop 颜色/尺码/option 专用规则。",
         "- 保留 action-level signal：visible_delta、action no_progress、context cycle no_progress。",
-        "- 新增 trajectory-level signal：相同 action_signature 连续 5 次触发 repeated_behavior_risk。",
+        f"- 新增 trajectory-level signal：相同 action_signature 连续 {metrics['repeated_behavior_risk_threshold']} 次触发 repeated_behavior_risk。",
         "- no_progress 是 action-level 局部无进展。",
         "- repeated_behavior_risk 是 trajectory-level 风险，不要求 visible_delta=False。",
         "- pre 仍然只检测格式是否合法、当前 action 是否将成为第 3 次重复无可见变化。",
@@ -1134,7 +1135,7 @@ def render_manual_audit(metrics: dict[str, Any], trajectories: list[dict[str, An
         "",
         "## Trajectory-level signals",
         "",
-        "- repeated_behavior_risk：连续相同 action_signature 达到 5 次后触发。",
+        f"- repeated_behavior_risk：连续相同 action_signature 达到 {metrics['repeated_behavior_risk_threshold']} 次后触发。",
         "- 该信号不要求 visible_delta=False，用来捕捉翻页等看似有页面变化但行为策略已经卡住的轨迹。",
         f"- repeated_behavior_risk_action_count：{metrics['repeated_behavior_risk_action_count']}",
         f"- repeated_behavior_risk_sample_count：{metrics['repeated_behavior_risk_sample_count']}",

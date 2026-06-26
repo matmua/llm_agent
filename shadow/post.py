@@ -7,6 +7,9 @@ from typing import Any
 from shadow.parser import normalize_value
 
 
+REPEATED_BEHAVIOR_RISK_STREAK = 3
+
+
 def run_post_check(
     attributes_before: dict[str, Any],
     observed_attrs_after: dict[str, dict[str, Any]],
@@ -21,7 +24,7 @@ def run_post_check(
         action_record=action_record,
         shadow_state=shadow_state,
     )
-    repeated_behavior_risk = signature_streak >= 5
+    repeated_behavior_risk = signature_streak >= REPEATED_BEHAVIOR_RISK_STREAK
     same_action_count = same_action_no_visible_delta_count(
         action_record=action_record,
         shadow_state=shadow_state,

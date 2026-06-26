@@ -129,7 +129,7 @@ def test_post_marks_third_same_action_without_visible_delta_as_no_progress():
     assert post["no_progress_reason"] == "same_action_repeated_without_visible_delta"
 
 
-def test_post_marks_fifth_consecutive_signature_as_trajectory_risk_even_with_delta():
+def test_post_marks_third_consecutive_signature_as_trajectory_risk_even_with_delta():
     state = new_shadow_state()
     before = extract_observation_attributes("Search page", {"clickables": ["next >"]}, step=0)
     after = extract_observation_attributes(
@@ -143,7 +143,7 @@ def test_post_marks_fifth_consecutive_signature_as_trajectory_risk_even_with_del
         "context_before": "ctx_a",
         "action_signature": signature,
     }
-    for _ in range(4):
+    for _ in range(2):
         state["actions"].append(
             {
                 "context_before": "ctx_a",
@@ -155,7 +155,7 @@ def test_post_marks_fifth_consecutive_signature_as_trajectory_risk_even_with_del
     assert post["visible_delta"] is True
     assert post["no_progress"] is False
     assert post["same_action_no_visible_delta_count"] == 0
-    assert post["same_action_signature_streak"] == 5
+    assert post["same_action_signature_streak"] == 3
     assert post["repeated_behavior_risk"] is True
     assert post["repeated_behavior_reason"] == "same_action_signature_streak"
 
@@ -257,6 +257,7 @@ def test_mock_runner_keeps_state_out_of_agent_and_actions_unchanged(tmp_path):
     assert metrics["repair_enabled"] is False
     assert metrics["repair_hint_enabled"] is False
     assert metrics["repair_hint_to_agent"] is False
+    assert metrics["repeated_behavior_risk_threshold"] == 3
     assert metrics["state_prompt_leak_count"] == 0
     assert metrics["action_changed_count"] == 0
     assert "repeated_behavior_risk_action_count" in metrics
