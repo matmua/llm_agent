@@ -47,12 +47,21 @@ logs/*
 !logs/rule_shadow_v1_prepost_llmverify_threshold3_webshop20/**
 !logs/rule_shadow_v1_hintrepair_threshold3_webshop20/
 !logs/rule_shadow_v1_hintrepair_threshold3_webshop20/**
+!logs/rule_shadow_v1_baseline_threshold3_webshop200/
+!logs/rule_shadow_v1_baseline_threshold3_webshop200/**
+!logs/rule_shadow_v1_prepost_llmverify_threshold3_webshop200/
+!logs/rule_shadow_v1_prepost_llmverify_threshold3_webshop200/**
+!logs/rule_shadow_v1_hintrepair_threshold3_webshop200/
+!logs/rule_shadow_v1_hintrepair_threshold3_webshop200/**
 reports/*
 !reports/webshop20_rerun_comparison_zh.md
 !reports/webshop20_shadow_drop_repair_audit_zh.md
 !reports/webshop20_promptfix_recovery_report_zh.md
 !reports/webshop20_verify_repair_trajectory_audit_zh.md
 !reports/webshop20_threshold3_repair_summary_zh.md
+!reports/webshop200_threshold3_threeway_summary_zh.md
+!reports/webshop200_threshold3_threeway_metrics.json
+!reports/webshop200_threshold3_threeway_task_compare.csv
 !reports/rule_shadow_v1_webshop20/
 !reports/rule_shadow_v1_webshop20/**
 !reports/rule_shadow_v1_repeat_webshop20/
@@ -83,6 +92,12 @@ reports/*
 !reports/rule_shadow_v1_prepost_llmverify_threshold3_webshop20/**
 !reports/rule_shadow_v1_hintrepair_threshold3_webshop20/
 !reports/rule_shadow_v1_hintrepair_threshold3_webshop20/**
+!reports/rule_shadow_v1_baseline_threshold3_webshop200/
+!reports/rule_shadow_v1_baseline_threshold3_webshop200/**
+!reports/rule_shadow_v1_prepost_llmverify_threshold3_webshop200/
+!reports/rule_shadow_v1_prepost_llmverify_threshold3_webshop200/**
+!reports/rule_shadow_v1_hintrepair_threshold3_webshop200/
+!reports/rule_shadow_v1_hintrepair_threshold3_webshop200/**
 
 # Python/cache noise
 __pycache__/

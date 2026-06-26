@@ -1,0 +1,163 @@
+{
+  "num_samples": 200,
+  "max_steps": 15,
+  "durations_seconds": {
+    "baseline": 541,
+    "verify_only": 941,
+    "hint_repair": 705,
+    "total": 2187
+  },
+  "baseline": {
+    "success_count": 129,
+    "success_rate": 0.645,
+    "avg_reward": 0.34581677489177487,
+    "avg_steps": 9.13
+  },
+  "verify_only": {
+    "success_count": 130,
+    "success_rate": 0.65,
+    "avg_reward": 0.34867391774891776,
+    "avg_steps": 9.12,
+    "action_changed_count": 0,
+    "llm_parse_error_count": 0,
+    "repair_hint_enabled": false,
+    "repair_hint_to_agent": false
+  },
+  "hint_repair": {
+    "success_count": 138,
+    "success_rate": 0.69,
+    "avg_reward": 0.37127384772090655,
+    "avg_steps": 8.855,
+    "action_changed_count": 4,
+    "pre_repair_attempt_count": 9,
+    "pre_repair_success_count": 9,
+    "pre_repair_fallback_count": 0,
+    "post_hint_created_count": 114,
+    "post_hint_applied_count": 102,
+    "repair_hint_followed_count": 91,
+    "repair_hint_ignored_count": 11
+  },
+  "baseline_to_repair": {
+    "net_success_gain": 9,
+    "fail_to_success_count": 13,
+    "success_to_fail_count": 4,
+    "fail_to_success_with_repair_count": 12,
+    "fail_to_success_without_repair_count": 1,
+    "reward_improved_count": 15,
+    "reward_decreased_count": 5,
+    "fail_to_success_tasks": [
+      5,
+      7,
+      15,
+      57,
+      124,
+      127,
+      129,
+      139,
+      143,
+      147,
+      168,
+      170,
+      193
+    ],
+    "fail_to_success_with_repair_tasks": [
+      5,
+      7,
+      15,
+      57,
+      124,
+      127,
+      129,
+      139,
+      143,
+      168,
+      170,
+      193
+    ],
+    "fail_to_success_without_repair_tasks": [
+      147
+    ],
+    "success_to_fail_tasks": [
+      98,
+      120,
+      136,
+      182
+    ],
+    "reward_improved_tasks": [
+      5,
+      7,
+      15,
+      57,
+      63,
+      86,
+      124,
+      127,
+      129,
+      139,
+      143,
+      147,
+      168,
+      170,
+      193
+    ],
+    "reward_decreased_tasks": [
+      89,
+      98,
+      120,
+      136,
+      182
+    ]
+  },
+  "prompt_leakage_check": {
+    "state_to_agent": false,
+    "verify_only_repair_hint_to_agent": false,
+    "verify_only_repair_hint_enabled": false,
+    "verify_only_repair_hint_prompt_count": 0,
+    "baseline_state_prompt_leak_count": 0,
+    "verify_state_prompt_leak_count": 0,
+    "repair_state_prompt_leak_count": 0,
+    "repair_hint_prompt_count": 104,
+    "internal_fields_in_agent_history": false,
+    "baseline_verify_action_mismatch_count": 3,
+    "baseline_verify_prompt_hash_mismatch_at_first_diff_count": 0,
+    "baseline_verify_first_diff_prompt_sha_all_equal": true
+  },
+  "risk_verifier_stats": {
+    "baseline": {
+      "pre_rule_risk_trigger_action_count": 0,
+      "post_rule_risk_trigger_action_count": 0,
+      "pre_llm_called_action_count": 0,
+      "post_llm_called_action_count": 0,
+      "pre_llm_is_error_action_count": 0,
+      "post_llm_is_error_action_count": 0,
+      "llm_parse_error_count": 0
+    },
+    "verify_only": {
+      "pre_rule_risk_trigger_action_count": 76,
+      "post_rule_risk_trigger_action_count": 415,
+      "pre_llm_called_action_count": 76,
+      "post_llm_called_action_count": 415,
+      "pre_llm_is_error_action_count": 34,
+      "post_llm_is_error_action_count": 389,
+      "llm_parse_error_count": 0
+    },
+    "hint_repair": {
+      "pre_rule_risk_trigger_action_count": 58,
+      "post_rule_risk_trigger_action_count": 144,
+      "pre_llm_called_action_count": 58,
+      "post_llm_called_action_count": 144,
+      "pre_llm_is_error_action_count": 9,
+      "post_llm_is_error_action_count": 114,
+      "llm_parse_error_count": 0
+    }
+  },
+  "repair_stats": {
+    "pre_repair_attempt_count": 9,
+    "pre_repair_success_count": 9,
+    "pre_repair_fallback_count": 0,
+    "post_hint_created_count": 114,
+    "post_hint_applied_count": 102,
+    "repair_hint_followed_count": 91,
+    "repair_hint_ignored_count": 11
+  }
+}
