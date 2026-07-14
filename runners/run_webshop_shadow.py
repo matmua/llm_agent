@@ -15,9 +15,11 @@ from typing import Any
 
 from agents.llm_client import MockLLMClient, OpenAIChatClient
 from agents.react_agent import WebShopReactAgent
+from intervention.dataset_policy import get_dataset_policy
 from intervention.repair_hint import (
     build_repair_hint,
     format_hint_for_agent,
+    format_pre_repair_hint_for_agent,
     mark_hint_outcome,
     should_apply_pre_repair,
     should_create_post_hint,
@@ -58,6 +60,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_products", type=int, default=1000)
     parser.add_argument("--num_samples", "--num_tasks", dest="num_samples", type=int, default=20)
     parser.add_argument("--start_index", type=int, default=0)
+    parser.add_argument("--task_indices_file", default="")
     parser.add_argument("--max_steps", type=int, default=15)
     parser.add_argument("--model", default=os.getenv("LLM_MODEL") or os.getenv("QWEN_MODEL") or "mock")
     parser.add_argument("--state_to_agent", default="false")
@@ -74,6 +77,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--risk_verify_recent_steps", type=int, default=6)
     parser.add_argument("--risk_verify_temperature", type=float, default=0.0)
     parser.add_argument("--repair_hint_enabled", nargs="?", const="true", default="false")
+    parser.add_argument("--dataset_policy", choices=["auto", "generic", "webshop", "step_budget", "simple_budget", "simple_budget_v2", "simple_budget_v3", "simple_budget_v4", "task_aware"], default="auto")
     parser.add_argument("--log_dir", default="logs/rule_shadow_v1_prepost_llmverify_webshop20")
     parser.add_argument("--report_dir", default="reports/rule_shadow_v1_prepost_llmverify_webshop20")
     return parser.parse_args()
@@ -83,6 +87,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if _parse_bool(args.state_to_agent):
         raise ValueError("rule_shadow_v1 requires --state_to_agent false")
     env = make_webshop_env(args.env, repo_path=args.webshop_repo, num_products=args.num_products)
+    task_ids = _resolve_task_ids(args)
+    dataset_policy = get_dataset_policy(
+        getattr(args, "dataset_policy", "auto"),
+        requested_env=args.env,
+        env_name=getattr(env, "env_name", ""),
+    )
     agent = WebShopReactAgent(_build_client(args.model))
     llm_risk_verify_enabled = _parse_bool(getattr(args, "llm_risk_verify", "false"))
     repair_hint_enabled = _parse_bool(getattr(args, "repair_hint_enabled", "false"))
@@ -97,25 +107,28 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "version": "rule_shadow_v1_llmverify",
         "env": env.env_name,
         "requested_env": args.env,
-        "num_samples": args.num_samples,
+        "num_samples": len(task_ids),
         "start_index": args.start_index,
+        "task_indices_file": getattr(args, "task_indices_file", ""),
+        "task_ids": task_ids,
         "max_steps": args.max_steps,
         "state_to_agent": False,
         "repair_enabled": repair_hint_enabled,
         "repair_hint_enabled": repair_hint_enabled,
         "repair_hint_to_agent": repair_hint_enabled,
+        "dataset_policy": dataset_policy.name,
         "llm_risk_verify_enabled": llm_risk_verify_enabled,
         "risk_verify_model": getattr(risk_client, "model", getattr(args, "risk_verify_model", "")),
         "risk_verify_recent_steps": getattr(args, "risk_verify_recent_steps", 6),
         "risk_verify_temperature": getattr(args, "risk_verify_temperature", 0.0),
+        "risk_verify_prompt_variant": "v4" if getattr(dataset_policy, "risk_verifier_system_prompt", None) else "default",
         "model": getattr(agent.client, "model", args.model),
     }
     _write_json(log_dir / "config.json", config)
 
     trajectories = []
     with (log_dir / "trajectories.jsonl").open("w", encoding="utf-8") as fh:
-        for offset in range(args.num_samples):
-            task_id = args.start_index + offset
+        for task_id in task_ids:
             trajectory = _run_episode(
                 env=env,
                 agent=agent,
@@ -126,6 +139,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 risk_verify_recent_steps=getattr(args, "risk_verify_recent_steps", 6),
                 risk_verify_temperature=getattr(args, "risk_verify_temperature", 0.0),
                 repair_hint_enabled=repair_hint_enabled,
+                dataset_policy=dataset_policy,
             )
             trajectories.append(trajectory)
             fh.write(json.dumps(trajectory, ensure_ascii=True) + "\n")
@@ -144,6 +158,31 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     return {"config": config, "metrics": metrics, "trajectories": trajectories}
 
 
+def _resolve_task_ids(args: argparse.Namespace) -> list[int]:
+    task_indices_file = str(getattr(args, "task_indices_file", "") or "").strip()
+    if not task_indices_file:
+        return [args.start_index + offset for offset in range(args.num_samples)]
+    task_ids = _read_task_indices_file(Path(task_indices_file))
+    if not task_ids:
+        raise ValueError(f"task_indices_file is empty: {task_indices_file}")
+    return task_ids
+
+
+def _read_task_indices_file(path: Path) -> list[int]:
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return []
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict):
+        payload = payload.get("task_ids", payload.get("indices"))
+    if isinstance(payload, list):
+        return [int(item) for item in payload]
+    return [int(token) for token in text.replace(",", " ").split()]
+
+
 def _run_episode(
     env: Any,
     agent: WebShopReactAgent,
@@ -154,6 +193,7 @@ def _run_episode(
     risk_verify_recent_steps: int = 6,
     risk_verify_temperature: float = 0.0,
     repair_hint_enabled: bool = False,
+    dataset_policy: Any = None,
 ) -> dict[str, Any]:
     observation = env.reset(task_id)
     instruction = env.get_instruction_text()
@@ -169,8 +209,11 @@ def _run_episode(
     done = False
     final_reward = 0.0
     pending_post_hint: dict[str, Any] | None = None
+    risk_verifier_system_prompt = getattr(dataset_policy, "risk_verifier_system_prompt", None)
 
     for step in range(max_steps):
+        remaining_steps_before = max_steps - step
+        remaining_steps_after = max_steps - step - 1
         available_before = env.get_available_actions()
         context_before = current_context(shadow_state) or context_value(observation)
         repair_record = _default_repair_record(enabled=repair_hint_enabled)
@@ -196,6 +239,8 @@ def _run_episode(
                 "hint": prompt_repair_hint,
                 "avoid_action": applied_pending_hint.get("avoid_action"),
                 "followed": outcome["followed"],
+                "policy_decision": applied_pending_hint.get("policy_decision"),
+                "hint_style": applied_pending_hint.get("hint_style"),
             }
             pending_post_hint = None
 
@@ -224,6 +269,7 @@ def _run_episode(
             client=risk_client,
             max_recent_steps=risk_verify_recent_steps,
             temperature=risk_verify_temperature,
+            system_prompt=risk_verifier_system_prompt,
         )
         action_record["risk_verifications"] = {
             "pre": pre_verification,
@@ -239,31 +285,52 @@ def _run_episode(
         executed_parsed = parsed
         if should_apply_pre_repair(pre_verification, repair_hint_enabled):
             pre_hint = build_repair_hint(pre_verification, "pre", action_record)
-            pre_hint_text = format_hint_for_agent(pre_hint)
-            repaired_action = agent.act(
-                task_instruction=instruction,
+            repair_decision = dataset_policy.decide_pre_repair(
+                action_record=action_record,
+                verification=pre_verification,
                 observation=observation,
-                action_history=history,
                 available_actions=available_before,
-                state_summary="",
-                repair_hint=pre_hint_text,
+                shadow_state=shadow_state,
+                remaining_steps=remaining_steps_before,
+                max_steps=max_steps,
+                task=instruction,
             )
-            repaired_parsed = parse_action(repaired_action)
+            pre_hint["policy_decision"] = repair_decision.to_dict()
+            pre_hint["hint_style"] = repair_decision.prompt_strength
             repair_record.update(
                 {
-                    "pre_repair_attempted": True,
-                    "pre_repair_hint": pre_hint_text,
+                    "pre_repair_decision": repair_decision.to_dict(),
                     "pre_repair_original_action": raw_action,
-                    "pre_repair_repaired_action": repaired_action,
                 }
             )
-            if repaired_parsed.get("format_valid"):
-                executed_action = repaired_action
-                executed_parsed = repaired_parsed
-                repair_record["pre_repair_success"] = True
-            else:
-                repair_record["pre_repair_success"] = False
-                repair_record["pre_repair_failed_reason"] = "invalid_repaired_action_format"
+            if repair_decision.mode == "pre_repair":
+                pre_hint_text = format_pre_repair_hint_for_agent(
+                    pre_hint,
+                    prompt_strength=repair_decision.prompt_strength,
+                )
+                repaired_action = agent.act(
+                    task_instruction=instruction,
+                    observation=observation,
+                    action_history=history,
+                    available_actions=available_before,
+                    state_summary="",
+                    repair_hint=pre_hint_text,
+                )
+                repaired_parsed = parse_action(repaired_action)
+                repair_record.update(
+                    {
+                        "pre_repair_attempted": True,
+                        "pre_repair_hint": pre_hint_text,
+                        "pre_repair_repaired_action": repaired_action,
+                    }
+                )
+                if repaired_parsed.get("format_valid"):
+                    executed_action = repaired_action
+                    executed_parsed = repaired_parsed
+                    repair_record["pre_repair_success"] = True
+                else:
+                    repair_record["pre_repair_success"] = False
+                    repair_record["pre_repair_failed_reason"] = "invalid_repaired_action_format"
 
         action_record["executed_action"] = executed_action
         action_record["executed_parsed_action"] = executed_parsed
@@ -297,18 +364,67 @@ def _run_episode(
             client=risk_client,
             max_recent_steps=risk_verify_recent_steps,
             temperature=risk_verify_temperature,
+            system_prompt=risk_verifier_system_prompt,
         )
         action_record["risk_verifications"]["post"] = post_verification
         if should_create_post_hint(post_verification, repair_hint_enabled):
             pending_post_hint = build_repair_hint(post_verification, "post", action_record)
-            post_hint_text = format_hint_for_agent(pending_post_hint)
-            repair_record.update(
-                {
-                    "post_hint_created": True,
-                    "post_hint": post_hint_text,
-                    "post_hint_apply_to_next_step": True,
-                }
+            post_decision = dataset_policy.decide_post_hint(
+                action_record=action_record,
+                verification=post_verification,
+                observation=observation_after,
+                available_actions=available_after,
+                shadow_state=shadow_state,
+                remaining_steps=remaining_steps_after,
+                max_steps=max_steps,
+                task=instruction,
             )
+            repair_record["post_hint_decision"] = post_decision.to_dict()
+            if post_decision.mode == "hint":
+                pending_post_hint["policy_decision"] = post_decision.to_dict()
+                pending_post_hint["hint_style"] = post_decision.prompt_strength
+                post_hint_text = format_hint_for_agent(pending_post_hint)
+                repair_record.update(
+                    {
+                        "post_hint_created": True,
+                        "post_hint": post_hint_text,
+                        "post_hint_apply_to_next_step": True,
+                    }
+                )
+            else:
+                pending_post_hint = None
+
+        if pending_post_hint is None and repair_hint_enabled and not done and remaining_steps_after > 0:
+            budget_decision = dataset_policy.decide_budget_hint(
+                action_record=action_record,
+                observation=observation_after,
+                available_actions=available_after,
+                shadow_state=shadow_state,
+                remaining_steps=remaining_steps_after,
+                max_steps=max_steps,
+                task=instruction,
+            )
+            if budget_decision.mode == "hint":
+                pending_post_hint = {
+                    "stage": "post",
+                    "source_step": action_record.get("step"),
+                    "error_type": "budget_pressure",
+                    "repair_hint": "",
+                    "avoid_action": None,
+                    "action_under_check": action_record.get("executed_action"),
+                    "post_check": action_record.get("post_check", {}),
+                    "policy_decision": budget_decision.to_dict(),
+                    "hint_style": budget_decision.prompt_strength,
+                }
+                post_hint_text = format_hint_for_agent(pending_post_hint)
+                repair_record["post_hint_decision"] = budget_decision.to_dict()
+                repair_record.update(
+                    {
+                        "post_hint_created": True,
+                        "post_hint": post_hint_text,
+                        "post_hint_apply_to_next_step": True,
+                    }
+                )
 
         merge_attributes(shadow_state, observed_after)
         shadow_state["actions"].append(action_record)
@@ -384,6 +500,30 @@ def _default_repair_record(enabled: bool) -> dict[str, Any]:
         "pre_repair_repaired_action": None,
         "pre_repair_success": False,
         "pre_repair_failed_reason": None,
+        "pre_repair_decision": {
+            "mode": None,
+            "reason": None,
+            "policy": None,
+            "prompt_strength": None,
+            "action_class": None,
+            "protected": False,
+            "stuck": False,
+            "completion_visible": False,
+            "remaining_steps": None,
+            "budget_level": "unknown",
+        },
+        "post_hint_decision": {
+            "mode": None,
+            "reason": None,
+            "policy": None,
+            "prompt_strength": None,
+            "action_class": None,
+            "protected": False,
+            "stuck": False,
+            "completion_visible": False,
+            "remaining_steps": None,
+            "budget_level": "unknown",
+        },
         "post_hint_created": False,
         "post_hint": "",
         "post_hint_apply_to_next_step": False,
@@ -538,6 +678,114 @@ def compute_metrics(trajectories: list[dict[str, Any]], max_steps: int) -> dict[
             for item in action_records
             if (item.get("repair") or {}).get("pre_repair_attempted")
             and not (item.get("repair") or {}).get("pre_repair_success")
+        ),
+        "pre_repair_decision_pre_repair_count": sum(
+            1
+            for item in action_records
+            if ((item.get("repair") or {}).get("pre_repair_decision") or {}).get("mode")
+            == "pre_repair"
+        ),
+        "pre_repair_decision_record_only_count": sum(
+            1
+            for item in action_records
+            if ((item.get("repair") or {}).get("pre_repair_decision") or {}).get("mode")
+            == "record_only"
+        ),
+        "pre_repair_protected_local_repeat_count": sum(
+            1
+            for item in action_records
+            if ((item.get("repair") or {}).get("pre_repair_decision") or {}).get("protected")
+            is True
+        ),
+        "pre_repair_strong_prompt_count": sum(
+            1
+            for item in action_records
+            if ((item.get("repair") or {}).get("pre_repair_decision") or {}).get(
+                "prompt_strength"
+            )
+            == "strong"
+        ),
+        "pre_repair_completion_prompt_count": sum(
+            1
+            for item in action_records
+            if ((item.get("repair") or {}).get("pre_repair_decision") or {}).get(
+                "prompt_strength"
+            )
+            == "completion"
+        ),
+        "pre_repair_task_prompt_count": sum(
+            1
+            for item in action_records
+            if ((item.get("repair") or {}).get("pre_repair_decision") or {}).get(
+                "prompt_strength"
+            )
+            in {"task", "task_late", "task_soft"}
+        ),
+        "pre_repair_stuck_local_repeat_count": sum(
+            1
+            for item in action_records
+            if ((item.get("repair") or {}).get("pre_repair_decision") or {}).get("stuck")
+            is True
+        ),
+        "post_hint_completion_count": sum(
+            1
+            for item in action_records
+            if ((item.get("repair") or {}).get("post_hint_decision") or {}).get(
+                "prompt_strength"
+            )
+            == "completion"
+        ),
+        "post_hint_guarded_completion_count": sum(
+            1
+            for item in action_records
+            if ((item.get("repair") or {}).get("post_hint_decision") or {}).get(
+                "prompt_strength"
+            )
+            == "finish_guarded"
+        ),
+        "post_hint_budget_finish_count": sum(
+            1
+            for item in action_records
+            if ((item.get("repair") or {}).get("post_hint_decision") or {}).get(
+                "prompt_strength"
+            )
+            == "budget_finish"
+        ),
+        "post_hint_late_prompt_count": sum(
+            1
+            for item in action_records
+            if ((item.get("repair") or {}).get("post_hint_decision") or {}).get(
+                "prompt_strength"
+            )
+            in {"late", "task_late"}
+        ),
+        "post_hint_task_prompt_count": sum(
+            1
+            for item in action_records
+            if ((item.get("repair") or {}).get("post_hint_decision") or {}).get(
+                "prompt_strength"
+            )
+            in {"task", "task_late", "task_soft"}
+        ),
+        "post_hint_low_budget_count": sum(
+            1
+            for item in action_records
+            if ((item.get("repair") or {}).get("post_hint_decision") or {}).get(
+                "budget_level"
+            )
+            in {"low", "final"}
+        ),
+        "post_hint_protected_local_repeat_count": sum(
+            1
+            for item in action_records
+            if ((item.get("repair") or {}).get("post_hint_decision") or {}).get("protected")
+            is True
+        ),
+        "post_hint_stuck_local_repeat_count": sum(
+            1
+            for item in action_records
+            if ((item.get("repair") or {}).get("post_hint_decision") or {}).get("stuck")
+            is True
         ),
         "post_hint_created_count": sum(
             1 for item in action_records if (item.get("repair") or {}).get("post_hint_created")
@@ -1016,8 +1264,12 @@ def render_repair_summary(metrics: dict[str, Any], trajectories: list[dict[str, 
         "",
         "本次是轻量 repair hint 模式。",
         "",
-        "- pre verified error 会尝试当前 step 重新生成一次 action。",
-        "- post verified error 会创建下一步一次性 repair hint。",
+        "- pre verified error 会先经过 dataset policy repair decision。",
+        "- WebShop policy 对重复 search / next > / < prev / back to search 做强 pre-repair。",
+        "- 商品 id / option / buy now 等局部重复默认只记录风险或给 soft hint，保护必要局部循环。",
+        "- 当商品/option 重复已经无 visible delta 且 Buy Now 可见时，policy 会升级为 completion hint / targeted pre-repair。",
+        "- pre verified error 只有在 policy 允许时才会尝试当前 step 重新生成一次 action。",
+        "- post verified error 会经 dataset policy 创建下一步一次性 repair hint。",
         "- 不做回滚。",
         "- 不做多轮重试。",
         "- 不把完整 state 给 agent。",
@@ -1038,6 +1290,21 @@ def render_repair_summary(metrics: dict[str, Any], trajectories: list[dict[str, 
         f"- pre_repair_attempt_count：{metrics['pre_repair_attempt_count']}",
         f"- pre_repair_success_count：{metrics['pre_repair_success_count']}",
         f"- pre_repair_fallback_count：{metrics['pre_repair_fallback_count']}",
+        f"- pre_repair_decision_pre_repair_count：{metrics['pre_repair_decision_pre_repair_count']}",
+        f"- pre_repair_decision_record_only_count：{metrics['pre_repair_decision_record_only_count']}",
+        f"- pre_repair_protected_local_repeat_count：{metrics['pre_repair_protected_local_repeat_count']}",
+        f"- pre_repair_strong_prompt_count：{metrics['pre_repair_strong_prompt_count']}",
+        f"- pre_repair_completion_prompt_count：{metrics['pre_repair_completion_prompt_count']}",
+        f"- pre_repair_task_prompt_count：{metrics.get('pre_repair_task_prompt_count', 0)}",
+        f"- pre_repair_stuck_local_repeat_count：{metrics['pre_repair_stuck_local_repeat_count']}",
+        f"- post_hint_completion_count：{metrics['post_hint_completion_count']}",
+        f"- post_hint_guarded_completion_count：{metrics.get('post_hint_guarded_completion_count', 0)}",
+        f"- post_hint_budget_finish_count：{metrics.get('post_hint_budget_finish_count', 0)}",
+        f"- post_hint_late_prompt_count：{metrics['post_hint_late_prompt_count']}",
+        f"- post_hint_task_prompt_count：{metrics.get('post_hint_task_prompt_count', 0)}",
+        f"- post_hint_low_budget_count：{metrics['post_hint_low_budget_count']}",
+        f"- post_hint_protected_local_repeat_count：{metrics['post_hint_protected_local_repeat_count']}",
+        f"- post_hint_stuck_local_repeat_count：{metrics['post_hint_stuck_local_repeat_count']}",
         f"- post_hint_created_count：{metrics['post_hint_created_count']}",
         f"- post_hint_applied_count：{metrics['post_hint_applied_count']}",
         f"- repair_hint_followed_count：{metrics['repair_hint_followed_count']}",

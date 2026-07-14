@@ -2,6 +2,7 @@ import json
 
 from intervention.risk_verifier import (
     build_risk_package,
+    format_available_actions,
     parse_verifier_response,
     verify_post_risk_if_triggered,
     verify_pre_risk_if_triggered,
@@ -50,7 +51,7 @@ def _risk_action(step=4):
     }
 
 
-def test_parse_verifier_response_requires_exact_five_fields():
+def test_parse_verifier_response_accepts_legacy_five_fields():
     raw = json.dumps(
         {
             "is_error": True,
@@ -69,6 +70,47 @@ def test_parse_verifier_response_requires_exact_five_fields():
     invalid = parse_verifier_response('{"is_error": false, "error_type": "none"}')
     assert invalid["is_error"] is False
     assert invalid["parse_error"].startswith("invalid_fields")
+
+def test_parse_verifier_response_accepts_extended_progress_fields():
+    raw = json.dumps(
+        {
+            "is_error": True,
+            "error_type": "loop_or_repetition",
+            "confidence": 0.82,
+            "repair_hint": "Choose a task-relevant action.",
+            "avoid_action": "click[details]",
+            "is_recoverable": True,
+            "progress_assessment": "no_progress",
+            "should_intervene": "soft",
+            "missing_requirement": "task-relevant evidence",
+            "suggested_next_action_type": "inspect a different visible option",
+        }
+    )
+    parsed = parse_verifier_response(raw)
+    assert parsed["parse_error"] is None
+    assert parsed["is_error"] is True
+    assert parsed["is_recoverable"] is True
+    assert parsed["progress_assessment"] == "no_progress"
+    assert parsed["should_intervene"] == "soft"
+    assert parsed["missing_requirement"] == "task-relevant evidence"
+
+    invalid = parse_verifier_response(
+        json.dumps(
+            {
+                "is_error": True,
+                "error_type": "loop_or_repetition",
+                "confidence": 0.82,
+                "repair_hint": "Choose a task-relevant action.",
+                "avoid_action": "click[details]",
+                "is_recoverable": True,
+                "progress_assessment": "stalled",
+                "should_intervene": "soft",
+                "missing_requirement": "task-relevant evidence",
+                "suggested_next_action_type": "inspect a different visible option",
+            }
+        )
+    )
+    assert invalid["parse_error"] == "invalid_progress_assessment"
 
 
 def test_non_error_output_must_be_conservative_shape():
@@ -212,3 +254,38 @@ def test_build_risk_package_limits_recent_trace_and_omits_outcome_labels():
     assert [item["step"] for item in package["recent_trace"]] == [4, 5, 8]
     assert "success" not in json.dumps(package)
     assert "reward" not in json.dumps(package)
+
+
+def test_format_available_actions_accepts_generic_command_and_tool_schemas():
+    actions = format_available_actions(
+        {
+            "commands": ["pytest tests/test_app.py"],
+            "tools": [{"tool": "final_answer"}],
+        }
+    )
+    assert actions == ["pytest tests/test_app.py", "final_answer"]
+
+
+def test_format_available_actions_accepts_tool_name_mapping_schema():
+    actions = format_available_actions(
+        {
+            "tools": {
+                "read_file": {"description": "Read a file"},
+                "final_answer": {},
+            }
+        }
+    )
+    assert actions == ["read_file", "final_answer"]
+
+
+def test_build_risk_package_includes_generic_available_actions():
+    current = _risk_action(step=8)
+    package = build_risk_package(
+        action_record=current,
+        shadow_state={"actions": []},
+        task="fix a bug",
+        current_observation="ready to test",
+        available_actions={"commands": ["pytest tests/test_app.py"], "tools": [{"tool": "final_answer"}]},
+        max_recent_steps=3,
+    )
+    assert package["available_actions"] == ["pytest tests/test_app.py", "final_answer"]

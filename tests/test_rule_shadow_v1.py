@@ -311,6 +311,37 @@ def test_mock_runner_keeps_state_out_of_agent_and_actions_unchanged(tmp_path):
             }
 
 
+def test_mock_runner_uses_task_indices_file(tmp_path):
+    task_file = tmp_path / "task_ids.json"
+    task_file.write_text(json.dumps([1, 0]), encoding="utf-8")
+    result = run(
+        Namespace(
+            env="mock",
+            webshop_repo="external/webshop",
+            num_products=1000,
+            num_samples=99,
+            start_index=0,
+            task_indices_file=str(task_file),
+            max_steps=3,
+            model="mock",
+            state_to_agent="false",
+            llm_risk_verify="false",
+            risk_verify_model="",
+            risk_verify_recent_steps=6,
+            risk_verify_temperature=0.0,
+            repair_hint_enabled="false",
+            log_dir=str(tmp_path / "logs_random"),
+            report_dir=str(tmp_path / "reports_random"),
+        )
+    )
+    assert result["config"]["task_ids"] == [1, 0]
+    assert result["metrics"]["num_samples"] == 2
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "logs_random" / "trajectories.jsonl").read_text().splitlines()
+    ]
+    assert [row["task_id"] for row in rows] == [1, 0]
+
 def test_agent_prompt_filters_internal_history_fields():
     prompt = WebShopReactAgent._build_prompt(
         task_instruction="Instruction: find a mug",

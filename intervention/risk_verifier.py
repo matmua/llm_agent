@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from intervention.action_space import candidate_action_texts, normalize_text
 from intervention.prompts import RISK_VERIFIER_SYSTEM_PROMPT
 
 ERROR_TYPES = {
@@ -19,7 +20,16 @@ ERROR_TYPES = {
     "none",
 }
 ACTIVE_ERROR_TYPES = ERROR_TYPES - {"none"}
-OUTPUT_KEYS = {"is_error", "error_type", "confidence", "repair_hint", "avoid_action"}
+BASE_OUTPUT_KEYS = {"is_error", "error_type", "confidence", "repair_hint", "avoid_action"}
+EXTENDED_OUTPUT_KEYS = BASE_OUTPUT_KEYS | {
+    "is_recoverable",
+    "progress_assessment",
+    "should_intervene",
+    "missing_requirement",
+    "suggested_next_action_type",
+}
+PROGRESS_ASSESSMENTS = {"progressed", "no_progress", "uncertain"}
+INTERVENTION_DECISIONS = {"yes", "no", "soft"}
 
 
 def verify_risk_if_triggered(
@@ -33,6 +43,7 @@ def verify_risk_if_triggered(
     max_recent_steps: int = 6,
     temperature: float = 0.0,
     stage: str = "post",
+    system_prompt: str | None = None,
 ) -> dict[str, Any]:
     if not enabled:
         return default_verification(enabled=False, triggered=False, called=False)
@@ -62,7 +73,7 @@ def verify_risk_if_triggered(
     try:
         raw_response = client.chat(
             [
-                {"role": "system", "content": RISK_VERIFIER_SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt or RISK_VERIFIER_SYSTEM_PROMPT},
                 {"role": "user", "content": json.dumps(risk_package, ensure_ascii=False)},
             ],
             temperature=temperature,
@@ -90,6 +101,7 @@ def verify_pre_risk_if_triggered(
     client: Any,
     max_recent_steps: int = 6,
     temperature: float = 0.0,
+    system_prompt: str | None = None,
 ) -> dict[str, Any]:
     return verify_risk_if_triggered(
         action_record=action_record,
@@ -102,6 +114,7 @@ def verify_pre_risk_if_triggered(
         max_recent_steps=max_recent_steps,
         temperature=temperature,
         stage="pre",
+        system_prompt=system_prompt,
     )
 
 
@@ -115,6 +128,7 @@ def verify_post_risk_if_triggered(
     client: Any,
     max_recent_steps: int = 6,
     temperature: float = 0.0,
+    system_prompt: str | None = None,
 ) -> dict[str, Any]:
     return verify_risk_if_triggered(
         action_record=action_record,
@@ -127,6 +141,7 @@ def verify_post_risk_if_triggered(
         max_recent_steps=max_recent_steps,
         temperature=temperature,
         stage="post",
+        system_prompt=system_prompt,
     )
 
 
@@ -260,6 +275,11 @@ def parse_verifier_response(raw_response: str) -> dict[str, Any]:
         "confidence": float(parsed["confidence"]),
         "repair_hint": parsed["repair_hint"],
         "avoid_action": parsed["avoid_action"],
+        "is_recoverable": bool(parsed.get("is_recoverable", parsed["is_error"])),
+        "progress_assessment": parsed.get("progress_assessment", "uncertain"),
+        "should_intervene": parsed.get("should_intervene", "yes" if parsed["is_error"] else "no"),
+        "missing_requirement": parsed.get("missing_requirement", ""),
+        "suggested_next_action_type": parsed.get("suggested_next_action_type", ""),
         "raw_response": raw_response,
         "parse_error": None,
     }
@@ -269,10 +289,12 @@ def validate_verifier_output(parsed: Any) -> str | None:
     if not isinstance(parsed, dict):
         return "output_not_object"
     keys = set(parsed)
-    if keys != OUTPUT_KEYS:
-        missing = sorted(OUTPUT_KEYS - keys)
-        extra = sorted(keys - OUTPUT_KEYS)
-        return f"invalid_fields:missing={missing}:extra={extra}"
+    if keys != BASE_OUTPUT_KEYS and keys != EXTENDED_OUTPUT_KEYS:
+        missing = sorted(BASE_OUTPUT_KEYS - keys)
+        allowed_extra = EXTENDED_OUTPUT_KEYS - BASE_OUTPUT_KEYS
+        extra = sorted(keys - EXTENDED_OUTPUT_KEYS)
+        unexpected_optional = sorted((keys - BASE_OUTPUT_KEYS) - allowed_extra)
+        return f"invalid_fields:missing={missing}:extra={extra or unexpected_optional}"
     if not isinstance(parsed.get("is_error"), bool):
         return "invalid_is_error_type"
     error_type = parsed.get("error_type")
@@ -288,6 +310,18 @@ def validate_verifier_output(parsed: Any) -> str | None:
     avoid_action = parsed.get("avoid_action")
     if avoid_action is not None and not isinstance(avoid_action, str):
         return "invalid_avoid_action_type"
+
+    if keys == EXTENDED_OUTPUT_KEYS:
+        if not isinstance(parsed.get("is_recoverable"), bool):
+            return "invalid_is_recoverable_type"
+        if parsed.get("progress_assessment") not in PROGRESS_ASSESSMENTS:
+            return "invalid_progress_assessment"
+        if parsed.get("should_intervene") not in INTERVENTION_DECISIONS:
+            return "invalid_should_intervene"
+        if not isinstance(parsed.get("missing_requirement"), str):
+            return "invalid_missing_requirement_type"
+        if not isinstance(parsed.get("suggested_next_action_type"), str):
+            return "invalid_suggested_next_action_type"
 
     if parsed["is_error"] is False:
         if error_type != "none":
@@ -336,12 +370,33 @@ def default_verification(
     }
 
 
-def format_available_actions(available_actions: dict[str, Any]) -> list[str]:
+def format_available_actions(available_actions: Any) -> list[str]:
     actions: list[str] = []
-    if available_actions.get("has_search_bar"):
-        actions.append("search[...]")
-    for item in available_actions.get("clickables") or []:
-        actions.append(f"click[{item}]")
+    seen: set[str] = set()
+
+    def add(value: str) -> None:
+        key = normalize_text(value)
+        if key in seen:
+            return
+        seen.add(key)
+        actions.append(value)
+
+    clickables = []
+    if isinstance(available_actions, dict):
+        if available_actions.get("has_search_bar"):
+            add("search[...]")
+        raw_clickables = available_actions.get("clickables") or []
+        if isinstance(raw_clickables, (str, int, float)) and not isinstance(raw_clickables, bool):
+            clickables = [raw_clickables]
+        else:
+            clickables = list(raw_clickables)
+    clickable_keys = {normalize_text(item) for item in clickables}
+    for item in clickables:
+        add(f"click[{item}]")
+    for item in candidate_action_texts(available_actions):
+        if normalize_text(item) in clickable_keys:
+            continue
+        add(str(item))
     return actions
 
 
